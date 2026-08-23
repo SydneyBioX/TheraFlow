@@ -1,4 +1,5 @@
-# TheraFlow: Molecule Processing & Benchmarking Pipeline
+# TheraFlow: A Multi-Stage Framework for evaluating generative drug models from transcriptomics and prioritizing candidates
+
 
 TheraFlow is a comprehensive, modular, and parallelized replication package for:
 1. **Molecule Preprocessing and Generation (`method_processing/`)**: Orchestrates and executes 10 generative methods on 7 transcriptomic datasets.
