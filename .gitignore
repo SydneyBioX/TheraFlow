@@ -1,0 +1,24 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+.eggs/
+build/
+dist/
+
+# R
+.Rproj.user/
+.Rhistory
+.RData
+.Ruserdata
+
+# Logs & temp files
+*.log
+*temp.py
+*_temp.py
+
+# User supplied datasets & large results
+data/
+results/
+run_docking_*/

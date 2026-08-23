@@ -1,0 +1,32 @@
+[build-system]
+requires = ["setuptools>=61.0.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "theraflow"
+version = "1.0.0"
+description = "A modular metrics calculation pipeline for generative drug discovery validation"
+readme = "README.md"
+requires-python = ">=3.8"
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "Operating System :: OS Independent"
+]
+dependencies = [
+    "pandas",
+    "numpy",
+    "joblib",
+    "tqdm",
+    "chembl-webresource-client",
+    "posebusters"
+]
+
+[project.scripts]
+theraflow = "main_pipeline:main"
+
+[tool.setuptools]
+package-dir = {"" = "pipeline"}
+py-modules = ["utils", "molecular_properties", "posebuster_analysis", "potency_chembl", "disease_reversal", "consensus_ranking", "main_pipeline"]
+
+[tool.setuptools.package-data]
+"*" = ["*.R"]
