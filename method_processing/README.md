@@ -1,115 +1,167 @@
-# Method Processing: Standalone Molecule Generation Orchestration
-This folder contains the orchestration scripts for generating hit-like molecules using **10 different cross-modal methods** across **7 distinct gene expression datasets**.
+# 🧬 TheraFlow Method Processing
+
+This directory serves as the centralized orchestration and execution hub for preparing test datasets and running all 9 deep generative models for drug candidate generation from transcriptomic signatures.
 
 ---
 
-## 📂 Folder Structure & Prerequisites
-To run the models standalone, clone their repositories and structure the parent directory of this folder (`method_processing/`) as follows:
+## 📊 1. Dataset Preprocessing
 
+The preprocessing pipeline downloads raw datasets, computes disease differential gene expression signatures, and aligns Entrez IDs or Gene Symbols to the landmark shapes expected by each target model.
+
+To run the unified download and preprocessing script:
+```bash
+python TheraFlow/method_processing/dataset_processing.py
 ```
-omics2mol/                  <-- Main Project Directory
-│
-├── method_processing/      <-- THIS FOLDER (Orchestration & Templates)
-│   ├── README.md           <-- Documentation
-│   ├── raw_data_access.py  <-- Programmatic download of GEO LINCS datasets
-│   ├── dataset_processing.py   <-- Unified Preprocessing
-│   ├── run_all_generation.py   <-- Master Runner
-│   └── run_gexmolgen_cli.py    <-- GExMolGen Offline CLI
-│
-├── data/
-│   └── test_datasets/      <-- Folder containing dataset .csv files
-│       ├── smilesgen/      <-- VAE / FAME / GEx2sGen / TransGEM inputs
-│       ├── paccmann_rl/    <-- Paccmann inputs
-│       └── gexmolgen/      <-- GExMolGen control/disease pairs
-│
-└── [Model Repositories]    <-- Cloned model folders (see cloning instructions below)
-    ├── SmilesGEN/
-    ├── TransGEM/
-    ├── Triomphe/
-    └── ...
-```
+
+### ⚙️ Pipeline Steps:
+* 📥 **NCBI GEO Retrieval**: Downloads raw LINCS Level 5 signatures and metadata (GSE70138 & GSE92742).
+* 🧪 **Differential Expression**: Invokes internal R modules (`edgeR`/`limma`) on GSE raw count data to derive z-scored log-fold changes for disease states (Cardiomyopathy, Parkinson's, HCC, Glaucoma).
+* 🔌 **Control Extraction**: Filters and extracts disease-specific drug perturbation control signatures.
+* 💾 **Unified Alignment**: Outputs aligned landmark gene datasets directly to `data/test_datasets/`.
 
 ---
 
-## 📥 Cloning Instructions
-Run the following commands in the parent folder to clone all required repositories:
+## 🚀 2. Running the 9 Generative Methods
 
-```bash
-# 1. SmilesGEN
-git clone https://github.com/hliulab/SmilesGEN.git
+The corresponding GitHub repository or software of each method was accessed into the parent directory of `TheraFlow` and the required package was installed in a clean Conda environment.
 
-# 2. TransGEM
-git clone https://github.com/hzauzqy/TransGEM.git
-
-# 3. paccmann_rl
-git clone https://github.com/PaccMann/paccmann_rl.git
-
-# 4. BiAAE
-git clone https://github.com/insilicomedicine/BiAAE.git
-
-# 5. BiCEV
-git clone https://github.com/ChemEXL/BiCEV.git
-
-# 6. GExMolGen
-git clone https://github.com/Bunnybeibei/GExMolGen.git
-```
-
-*Note: Models such as Triomphe, GxRNN, and the FAME/GEx2sGen reimplementations should be extracted or cloned into the main directory as well.*
+| Method | Conda Environment | Runner Script |
+|---|---|---|
+| **SmilesGEN** | `smilesgen` | `smilesgen.py` |
+| **BiAEE** | `biaee` | `biaee.py` |
+| **BiCEV** | `bicev` | `bicev.py` |
+| **PaccMann RL** | `paccmann_rl` | `paccmann_rl.py` |
+| **GxRNN** | `gxrnn` | `gxrnn.py` |
+| **TransGEM** | `transgem` | `transgem.py` |
+| **Triomphe** | `triomphe` | `triomphe.py` |
+| **FAME** | `fame` | `fame.py` |
+| **GEx2SGen** | `gex2sgen` | `gex2sgen.py` |
 
 ---
 
+### 1. SmilesGEN (Molecular Optimization)
+* **Execution**:
+  ```bash
+  git clone https://github.com/hliulab/SmilesGEN.git
+  python method_processing/smilesgen.py --run-all
+  ```
 
-## 📥 Accessing Raw LINCS/GEO Datasets
-Because the raw supplementary GCTX files are large (~5.6 GB for Phase 2 Level 5 COMPZ and ~53 GB for Phase 1 Level 3 INF), they are not versioned in Git. You can programmatically download and unpack them to the correct model folders using:
+### 2. BiAEE
+* **Execution**:
+  ```bash
+  git clone https://github.com/insilicomedicine/BiAAE.git
+  conda activate biaee
+  python method_processing/biaee.py --run-all
+  ```
 
-```bash
-# Print download URLs and targets without downloading
-python raw_data_access.py --dry-run
+### 3. BiCEV
+* **Execution**:
+  ```bash
+  git clone https://github.com/ChemEXL/BiCEV.git
+  conda activate bicev
+  python method_processing/bicev.py --run-all
+  ```
 
-# Download & extract GSE70138 dataset (used by SmilesGEN, paccmann_rl, etc. ~5.6 GB)
-python raw_data_access.py --gse70138
-```
+### 4. PaccMann RL
+* **Execution**:
+  ```bash
+  git clone https://github.com/PaccMann/paccmann_rl.git
+  conda activate paccmann_rl
+  python method_processing/paccmann_rl.py --run-all
+  ```
 
-## 🛠️ Data Preprocessing
-Each model expects its datasets in a specific path inside `data/test_datasets/`.
-You can preprocess and structure all raw dataset signatures into their required formats with the unified script **`dataset_processing.py`**:
+### 5. GxRNN
+* **Source**: The source code was accessed from [Nagoya CS GxRNN Page](https://yamanishi.cs.i.nagoya-u.ac.jp/gxrnn/)
+* **Execution**:
+  ```bash
+  conda activate gxrnn
+  python method_processing/gxrnn.py --run-all
+  ```
 
-To preprocess all datasets at once:
-```bash
-python dataset_processing.py --run-all
-```
+### 6. TransGEM
+* **Execution**:
+  ```bash
+  git clone https://github.com/hzauzqy/TransGEM.git
+  conda activate transgem
+  python method_processing/transgem.py --run-all
+  ```
 
-Or preprocess for specific models:
-```bash
-python dataset_processing.py --smilesgen --transgem
-```
+### 7. Triomphe
+* **Source**: The source code was accessed from [Kyutech Triomphe Page](http://labo.bio.kyutech.ac.jp/~yamani/triomphe/)
+* **Execution**:
+  ```bash
+  conda activate triomphe
+  python method_processing/triomphe.py --run-all
+  ```
+
+### 8. FAME
+* **Source**: This code is reimplemented (process details given in `/reimplementation/fame` directory)
+* **Execution**:
+  ```bash
+  conda activate fame
+  python method_processing/fame.py --run-all
+  ```
+
+### 9. GEx2SGen
+* **Source**: This code is reimplemented (process details given in `/reimplementation/gex2sgen` directory)
+* **Execution**:
+  ```bash
+  conda activate gex2sgen
+  python method_processing/gex2sgen.py --run-all
+
+### 10. GexMolGen
+* **Execution**:
+  ```bash
+  git clone https://github.com/Bunnybeibei/GexMolGen.git
+  conda activate gexmolgen
+  python server.py
+  ```
+  Upload the required data from the data/test_datasets/gexmolgen/ into the Standard tab of the webserver
 
 ---
 
-## 🚀 Running the Master Orchestrator
+## 🛠️ 3. CLI Arguments (Standardized for All Runners)
 
-The main runner script is **`run_all_generation.py`**. It automatically maps the correct Python interpreters (with pre-configured conda environments), prepares dataset inputs, dynamically instantiates templates, executes generation inside the corresponding model directories, and logs outcomes.
-
-### Execution Command:
-To run a **specific method** on a **specific dataset**:
-```bash
-python run_all_generation.py --method <method_name> --dataset <dataset_name>
-```
-
-To run **all combinations** sequentially:
-```bash
-python run_all_generation.py --run-all
-```
-
-### Options:
-*   **`--method`**: `smilesgen_vae_gen`, `gexmolgen`, `triomphe`, `transgem`, `paccmann_rl`, `gxrnn`, `biaee`, `bicev`, `fame`, `gex2sgen`
-*   **`--dataset`**: `Lincs1000_1`, `Lincs1000_2`, `cardiomyopathy`, `glaucoma`, `glaucoma_bulk`, `hcc`, `parkinsons`
+Each python runner script supports the following command-line interface:
+* `--run-all`: Run the model sequentially on all 7 benchmark datasets.
+* `--dataset <name>`: Run only on a specific benchmark dataset. Available choices:
+  `lincs1000_1`, `lincs1000_2`, `cardiomyopathy`, `parkinsons`, `hcc`, `glaucoma`, `glaucoma_bulk`.
 
 ---
 
+## 📁 4. Directory Structure (once the processing and methods are run)
 
----
-
-> [!IMPORTANT]
-> **Workspace Structure and Cloned Repositories**:
-> The orchestration runner scripts are configured using relative parent paths (e.g. `../SmilesGEN/`, `../TransGEM/`, etc.). This requires that the official GitHub repositories for the respective methods were cloned directly into the parent directory.
+```
+TheraFlow/method_processing/
+├── data/                         # Preprocessed datasets and reference metadata
+│   ├── test_datasets/            # Subfolders containing aligned signatures for each model
+│   │   ├── gexmolgen/            # GexMolGen input profiles (for FAME & GEx2SGen)
+│   │   ├── transgem/             # TransGEM input profiles
+│   │   ├── triomphe/             # Triomphe input profiles
+│   │   ├── paccmann_rl/          # PaccMann RL input profiles
+│   │   └── rest_methods/         # Inputs for SmilesGEN, BiAEE, BiCEV, GxRNN, FAME and GEx2SGen
+│   └── LINCS/                    # Local LINCS reference databases
+│       ├── GSE70138/             # GSE70138 compz profiles
+│       └── GSE92742/             # GSE92742 compz profiles
+├── outputs/                      # Output generated SMILES files for each method & dataset
+│   ├── smilesgen/
+│   ├── biaee/
+│   ├── bicev/
+│   ├── paccmann_rl/
+│   ├── gxrnn/
+│   ├── transgem/
+│   ├── triomphe/
+│   ├── fame/
+│   └── gex2sgen/
+│   └── gexmolgen/
+├── dataset_processing.py         # Unified download & preprocessing script
+├── smilesgen.py                  # SmilesGEN orchestrator runner
+├── biaee.py                      # BiAEE orchestrator runner
+├── bicev.py                      # BiCEV orchestrator runner
+├── paccmann_rl.py                # PaccMann RL orchestrator runner
+├── gxrnn.py                      # GxRNN orchestrator runner
+├── transgem.py                   # TransGEM orchestrator runner
+├── triomphe.py                   # Triomphe orchestrator runner
+├── fame.py                       # FAME orchestrator runner (Self-contained)
+└── gex2sgen.py                   # GEx2SGen orchestrator runner (Self-contained)
+```

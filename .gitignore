@@ -22,3 +22,6 @@ dist/
 data/
 results/
 run_docking_*/
+data/
+TheraFlow/method_processing/data/
+method_processing/outputs/
