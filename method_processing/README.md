@@ -36,7 +36,7 @@ The corresponding GitHub repository or software of each method was accessed into
 | **Triomphe** | `triomphe` | `triomphe.py` |
 | **FAME** | `fame` | `fame.py` |
 | **GEx2SGen** | `gex2sgen` | `gex2sgen.py` |
-| **GexMolgen** | `gexmolgen` | `PARENTDIR/gexmolgen/server.py` |
+| **GexMolGen** | `gexmolgen` | `PARENTDIR/gexmolgen/server.py` |
 
 ---
 
