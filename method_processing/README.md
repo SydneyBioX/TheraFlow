@@ -1,4 +1,4 @@
-# 🧬 TheraFlow Method Processing
+#  TheraFlow Method Processing
 
 This directory serves as the centralized orchestration and execution hub for preparing test datasets and running all 9 deep generative models for drug candidate generation from transcriptomic signatures.
 
@@ -14,10 +14,10 @@ python TheraFlow/method_processing/dataset_processing.py
 ```
 
 ### ⚙️ Pipeline Steps:
-* 📥 **NCBI GEO Retrieval**: Downloads raw LINCS Level 5 signatures and metadata (GSE70138 & GSE92742).
-* 🧪 **Differential Expression**: Invokes internal R modules (`edgeR`/`limma`) on GSE raw count data to derive z-scored log-fold changes for disease states (Cardiomyopathy, Parkinson's, HCC, Glaucoma).
-* 🔌 **Control Extraction**: Filters and extracts disease-specific drug perturbation control signatures.
-* 💾 **Unified Alignment**: Outputs aligned landmark gene datasets directly to `data/test_datasets/`.
+**NCBI GEO Retrieval**: Downloads raw LINCS Level 5 signatures and metadata (GSE70138 & GSE92742).
+**Differential Expression**: Invokes internal R modules (`edgeR`/`limma`) on GSE raw count data to derive z-scored log-fold changes for disease states (Cardiomyopathy, Parkinson's, HCC, Glaucoma).
+**Control Extraction**: Filters and extracts disease-specific drug perturbation control signatures.
+**Unified Alignment**: Outputs aligned landmark gene datasets directly to `data/test_datasets/`.
 
 ---
 
