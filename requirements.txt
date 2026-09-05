@@ -1,0 +1,28 @@
+# ==============================================================================
+# TheraFlow: Comprehensive Requirements Specification
+# ==============================================================================
+
+# Core Data Science & Scientific Computing
+pandas>=1.5.0
+numpy>=1.20.0
+scipy>=1.9.0
+
+# Cheminformatics & Conformation Validation
+rdkit>=2022.09.1
+posebusters>=0.2.0
+selfies>=2.1.0
+
+# Bioactivity & Chemical Database Access
+chembl-webresource-client>=0.10.8
+requests>=2.28.0
+
+# Multiprocessing & Utilities
+joblib>=1.2.0
+tqdm>=4.64.0
+
+# Deep Learning Framework (for Method Processing & Generation)
+torch>=2.0.0
+
+# Optional Structural Biology & Docking Utilities (Installable via conda/pip)
+# pdb2pqr>=3.6.0
+# openbabel
