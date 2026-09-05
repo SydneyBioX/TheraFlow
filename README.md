@@ -84,7 +84,7 @@ TheraFlow/
 Install the Python dependencies in a clean virtual or Conda environment:
 ```bash
 # Clone the repository
-git clone https://github.com/<your-org>/TheraFlow.git
+git clone [https://github.com/<your-org>/TheraFlow.git](https://github.com/SydneyBioX/TheraFlow.git)
 cd TheraFlow
 
 # Install Python dependencies
