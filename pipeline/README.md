@@ -9,7 +9,7 @@ The `TheraFlow/pipeline/` package is an end-to-end, modular benchmarking, filter
 2. [Prerequisites & Environment Setup](#-prerequisites--environment-setup)
 3. [Master Orchestrator (One-Click Execution)](#-master-orchestrator-one-click-execution)
 4. [Step-by-Step Execution Guide](#-step-by-step-execution-guide)
-   - [Step 1: Generative Performance Macro-Metrics](#stage-1-generative-performance-macro-metrics-1generative_perfpy)
+   - [Step 1: Generative Performance Macro-Metrics](#step-1-generative-performance-macro-metrics-1generative_perfpy)
    - [Step 2: 2D Physicochemical Properties, Safety Filters & Similarities](#stage-2-2d-physicochemical-properties-safety-filters--similarities-2molecular_propertiespy)
    - [Step 3: InChIKey Deduplication, 3D Embedding & PoseBusters](#stage-3-inchikey-deduplication-3d-embedding--posebusters-3posebuster_convert_sdfpy)
    - [Step 4: ChEMBL Target Profiling, Potency & Mechanism of Action](#stage-4-chembl-target-profiling-potency--mechanism-of-action-4potency_chemblpy)
