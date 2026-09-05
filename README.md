@@ -8,7 +8,7 @@
 
 - 🧪 **10 Deep Generative Methods**: Standardized execution and reimplementation pipelines for SmilesGEN, BiAEE, BiCEV, PaccMann RL, GxRNN, TransGEM, Triomphe, FAME, GEx2SGen, and GexMolGen.
 - 🧬 **7 Benchmark Transcriptomic Datasets**: Automated NCBI GEO download, differential expression computation (limma/edgeR), and landmark gene alignment across LINCS L1000 Phase 1/2 and 4 disease states (Cardiomyopathy, Parkinson's Disease, Hepatocellular Carcinoma, and Glaucoma).
-- 🔬 **7-Stage Downstream Evaluation & Prioritization**:
+- 🔬 **Multi-Stage Downstream Evaluation & Prioritization**:
   1. **Generative Performance**: Macro-metrics (Validity, Uniqueness, MOSES Novelty, and Internal Diversity).
   2. **2D Physicochemical & Safety**: Lipinski properties, QED, SA Score, and structural alerts (PAINS, BRENK, NIH).
   3. **3D Conformation & Physical Validity**: ETKDGv3 embedding, MMFF94 force field optimization, and PoseBusters validity checks.
