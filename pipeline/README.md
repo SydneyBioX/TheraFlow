@@ -1,139 +1,216 @@
-# TheraFlow: Metrics Calculation Pipeline
+# TheraFlow Downstream Evaluation & Prioritization Pipeline
 
-A modular, robust, and parallelized Python/R pipeline for calculating molecular metrics, safety profiles, ChEMBL target similarities, potency scores, and running DTSEA-based disease reversal.
-
-## Project Layout
-
-When cloned or set up as a standalone repository, TheraFlow files should be structured as follows:
-
-```
-your-github-repo/
-├── pyproject.toml              # Modern Python packaging configuration
-├── README.md                   # Package documentation
-├── __init__.py                 # Package initializer
-├── utils.py                    # Output merging and RDKit 3D SDF conformation generation
-├── molecular_properties.py     # Descriptors (QED, SA, LogP, TPSA, CSP3), PAINS, similarities
-├── posebuster_analysis.py      # PoseBusters validation checks
-├── potency_chembl.py           # Parallel ChEMBL API target and activity fetches
-├── disease_reversal.py         # Python wrapper invoking the R DTSEA script
-├── disease_reversal.R          # R script for biomaRt mapping and DTSEA calculations
-├── consensus_ranking.py        # Python wrapper invoking the R consensus ranking script
-├── consensus_ranking.R         # R script for Pareto front and RRA consensus ranking
-├── main_pipeline.py            # Global pipeline orchestrator (CLI entrypoint)
-└── data/                       # Directory containing reference and mapping datasets
-    ├── ppi.rds                 # PPI network RDS file (originally from STRING DB, score > 700)
-    ├── chembl_uniprot_mapping.txt # Target descriptions to UniProt IDs, can use BioMart in R to get the mappings
-    ├── lincs_gene_meta.csv     # LINCS probe IDs to gene symbols, can be downloaded from LINCS1000
-    └── test_datasets/          # Folder containing signature CSV files (e.g. glaucoma.csv)
-```
+The `TheraFlow/pipeline/` package is an end-to-end, modular benchmarking, filtering, target profiling, disease reversal scoring, multi-objective consensus ranking, and structural simulation framework for generative drug discovery models evaluated on transcriptomic signatures.
 
 ---
 
-## Installation
+## 📋 Table of Contents
+1. [Pipeline Architecture](#-pipeline-architecture)
+2. [Prerequisites & Environment Setup](#-prerequisites--environment-setup)
+3. [Master Orchestrator (One-Click Execution)](#-master-orchestrator-one-click-execution)
+4. [Step-by-Step Execution Guide](#-step-by-step-execution-guide)
+   - [Stage 1: Generative Performance Macro-Metrics](#stage-1-generative-performance-macro-metrics-1generative_perfpy)
+   - [Stage 2: 2D Physicochemical Properties, Safety Filters & Similarities](#stage-2-2d-physicochemical-properties-safety-filters--similarities-2molecular_propertiespy)
+   - [Stage 3: InChIKey Deduplication, 3D Embedding & PoseBusters](#stage-3-inchikey-deduplication-3d-embedding--posebusters-3posebuster_convert_sdfpy)
+   - [Stage 4: ChEMBL Target Profiling, Potency & Mechanism of Action](#stage-4-chembl-target-profiling-potency--mechanism-of-action-4potency_chemblpy)
+   - [Stage 5: DTSEA Disease DEG Reversal Scoring](#stage-5-dtsea-disease-deg-reversal-scoring-5disease_reversalpy--disease_reversalr)
+   - [Stage 6: Master Merging, Multi-Objective Pareto Optimization & RRA Consensus Ranking](#stage-6-master-merging-multi-objective-pareto-optimization--rra-consensus-ranking-6mergingpy--consensus_rankingr)
+   - [Stage 7: AlphaFold 3 Docking, Pocket Interface Extraction & QM/MM Setup](#stage-7-alphafold-3-docking-pocket-interface-extraction--qmmm-setup-7docking_md_setuppy--take_interfacepy)
+5. [Outputs & Data Dictionary](#-outputs--data-dictionary)
 
-### Dependencies
+---
 
-#### Python Packages
-* `pandas`
-* `numpy`
-* `rdkit`
-* `joblib`
-* `tqdm`
-* `posebusters`
-* `chembl-webresource-client`
+## 🏗️ Pipeline Architecture
 
-#### R Packages
-* `DTSEA`
-* `biomaRt`
-* `org.Hs.eg.db` (fallback)
-* `limma`
-* `data.table`
-* `dplyr`
-* `tidyr`
-* `igraph`
-* `furrr`
+#### Figure insert here
 
-### Package Installation
+---
 
-Install the package in editable mode from the root directory of your cloned repository:
+## ⚙️ Prerequisites & Environment Setup
+
+### 1. Python Environment
+Install core Python dependencies via pip:
+```bash
+pip install -r TheraFlow/requirements.txt
+```
+
+Key Python libraries:
+- `rdkit` (2D descriptors, fingerprints, ETKDGv3 conformation embedding, MMFF94 minimization)
+- `posebusters` (Physical and chemical validity validation)
+- `chembl-webresource-client` (Programmatic ChEMBL bioactivity and target API access)
+- `pandas`, `numpy`, `scipy`, `joblib`, `tqdm` (Multiprocessing & data manipulation)
+
+### 2. R Environment (for Stages 5 & 6)
+Stages 5 (DTSEA) and 6 (Consensus Ranking) call optimized R scripts. Ensure R ($\ge 4.0$) is installed with the following packages:
+
+```R
+install.packages(c("dplyr", "readr", "data.table", "tidyr", "rPref", "RobustRankAggreg", "jsonlite", "igraph", "purrr", "stringr", "BiocManager"))
+BiocManager::install("DTSEA")
+```
+
+### 3. Structural Tools (for Stage 7, Optional)
+- **AlphaFold 3**: Clone repository and configure inference virtual environment.
+- **PDB2PQR** (`pdb2pqr`): Used for PARSE force-field protonation and partial charge calculation at pH 7.4.
+- **ORCA** / **xTB**: Quantum chemistry calculation packages.
+
+---
+
+## ⚡ Master Orchestrator (One-Click Execution)
+
+You can execute the entire pipeline (Stages 1 through 6, and optionally Stage 7) with a single command. The master orchestrator runs all stages sequentially, passes intermediate files between stages, generates consensus candidate rankings, and merges all calculated metrics back into your input candidate dataset with an automatic timestamped backup:
 
 ```bash
-pip install -e .
+# Run full end-to-end evaluation & merge annotations back into processed_data.csv
+python TheraFlow/run_pipeline.py   --input TheraFlow/method_processing/data/processed_data.csv   --output_dir TheraFlow/outputs   --output_merged TheraFlow/method_processing/data/processed_data.csv
 ```
 
-Once installed, you can launch the pipeline directly from your shell command line using `theraflow`.
-
-### Required Reference Datasets (User Supplied)
-
-Because reference files are large, they are **not** included in the repository. You must create a `data/` directory in the repository root and place the following files there before running the pipeline:
-
-1. **`data/ppi.rds`**: A Protein-Protein Interaction (PPI) network saved as an R `igraph` RDS object. You can build this from STRING DB (e.g. human interactions with experimental score > 700).
-2. **`data/chembl_uniprot_mapping.txt`**: Tab-separated target mapping file.
-3. **`data/lincs_gene_meta.csv`**: LINCS probe mapping metadata.
-4. **`data/test_datasets/`**: A folder containing the disease signatures CSV files matching the datasets you want to evaluate (e.g., `glaucoma.csv` containing LINCS gene z-score profiles, or control/perturbed files for Excape datasets).
-
----
-
-## Pipeline Execution Steps
-
-The pipeline runs the following sequential steps, which can be run all at once or individually:
-
-1. **Step 1: Merge Outputs**: Combines generative method folder outputs (SmilesGen, GexMolGen, TransGEM, Bicev, Triomphe, etc.), standardizes columns to `SMILES`, and attaches inhibitor references.
-2. **Step 2: Calculate Properties**: Computes 2D chemical descriptors (QED, SA Score, MW, LogP, TPSA, CSP3 fraction, rotatable bonds, etc.), PAINS/BRENK/NIH safety filters, reference similarities, group rankings, and set-level summaries (Validity, Uniqueness, Novelty, Internal Diversity).
-3. **Step 3: Filter & Generate Conformations**: Filters compounds (Lipinski Rules of 5 + Complexity checks) and generates 3D conformations using RDKit's ETKDGv3.
-4. **Step 4: PoseBusters**: Runs PoseBusters validation checks (using config `"mol"`) on the generated SDF conformation file.
-5. **Step 5: ChEMBL Lookups**: Queries the ChEMBL API client in parallel to fetch target associations (60% similarity threshold) and consensus potency scores (80% similarity threshold).
-6. **Step 6: Disease Reversal**: Standardizes targets, maps SwissProt IDs to HGNC symbols, runs parallel DTSEA enrichment calculations in R, and performs consensus potency scaling.
-7. **Step 7: Merge Master Dataframe**: Combines the output results from all steps into a single aligned final master dataframe.
-8. **Step 8: Consensus Ranking**: Applies a 15-dimensional Pareto front optimization (using rPref) and Robust Rank Aggregation (RRA) ranking to select the top 10 consensus molecules per method and dataset.
+### Master CLI Options (`run_pipeline.py` / `pipeline/run_all.py`):
+| Option | Type | Default | Description |
+|---|---|---|---|
+| `--input` | `str` | `TheraFlow/method_processing/data/processed_data.csv` | Input candidate SMILES dataset. |
+| `--output_dir` | `str` | `TheraFlow/outputs` | Directory to store all intermediate and final outputs. |
+| `--output_merged` | `str` | `TheraFlow/method_processing/data/processed_data.csv` | Path to output dataset merged with all computed annotations. |
+| `--backup` | `bool` | `True` | Automatically create a `.backup.csv` file before overwriting target dataset. |
+| `--steps` | `str` | `1,2,3,4,5,6` | Comma-separated list of stage numbers to run (e.g., `--steps 1,2,3`). |
+| `--n_jobs_3d` | `int` | `4` | Parallel worker processes for 3D ETKDGv3 embedding in Stage 3. |
+| `--chembl_workers` | `int` | `5` | Concurrent threads for ChEMBL queries in Stage 4. |
+| `--r_workers` | `int` | `2` | Parallel processes for DTSEA calculations in Stage 5. |
+| `--top_n_consensus` | `int` | `10` | Number of top consensus candidates selected per method/dataset in Stage 6. |
+| `--run_af3` | `flag` | `False` | Launch AlphaFold 3 batch docking inference in Stage 7. |
+| `--extract_qm` | `flag` | `False` | Extract AF3 docking and QM metrics in Stage 7. |
 
 ---
 
-## CLI Usage
+## 🚀 Step-by-Step Execution Guide
 
-Run the entire pipeline end-to-end:
+You can also run each pipeline stage independently as a modular command-line tool.
+
+---
+
+### Stage 1: Generative Performance Macro-Metrics (`1.generative_perf.py`)
+Computes distribution-level quality and diversity metrics grouped by generative `method` and `test_dataset`.
+
+- **Metrics Computed**:
+  - **Validity**: Proportion of SMILES strings parseable by RDKit into valid chemical graphs.
+  - **Uniqueness**: Proportion of unique canonical SMILES among valid molecules.
+  - **Novelty (MOSES)**: Fraction of valid molecules not present in the MOSES reference chemical library (automatically downloaded and cached).
+  - **Internal Diversity (IntDiv)**: $1 - rac{1}{|S|^2} \sum_{m_1, m_2 \in S} T(m_1, m_2)$ using Morgan fingerprints (radius 2, 2048 bits).
 
 ```bash
-theraflow \
-  --method_outputs_dir results/method_outputs \
-  --output_dir results/pipeline_runs
+python TheraFlow/pipeline/1.generative_perf.py   --input TheraFlow/method_processing/data/processed_data.csv   --output TheraFlow/outputs/set_properties.csv   --ref_cache TheraFlow/outputs/ref_cache
 ```
-
-### Argument Flags
-
-* `--method_outputs_dir`: Directory containing raw method subfolders (default: `../../results/method_outputs`).
-* `--output_dir`: Output directory for generated pipeline runs (default: `../../results/pipeline_runs`).
-* `--steps`: Command-separated steps to run (default: `1,2,3,4,5,6,7,8`).
-* `--ppi_rds`: Path to PPI rds network file (default: `data/ppi.rds`). Note: The default dataset was sourced from STRING DB and filtered to high-confidence experimental interactions (confidence score > 700).
-* `--mapping_file`: Path to ChEMBL-UniProt mapping text file (default: `data/chembl_uniprot_mapping.txt`).
-* `--lincs_meta`: Path to LINCS gene meta CSV (default: `Omics2Drug/data/lincs_gene_meta.csv`).
-* `--test_datasets_dir`: Directory containing disease signature signature files (default: `Omics2Drug/data/test_datasets`).
-* `--n_jobs_3d`: Number of parallel jobs for RDKit 3D embedding (default: `4`).
-* `--workers_r`: Number of parallel workers for R DTSEA scoring (default: `4`).
-* `--workers_chembl`: Number of threads for ChEMBL API client requests (default: `5`).
 
 ---
 
-## Python API Usage
+### Stage 2: 2D Physicochemical Properties, Safety Filters & Similarities (`2.molecular_properties.py`)
+Evaluates single-molecule 2D descriptors, drug-likeness rules, structural alerts, and reference similarity.
 
-You can also import individual steps of the pipeline in your Python code:
+- **Metrics Computed**:
+  - **Physicochemical Properties**: Molecular Weight (MW), $\log P$ (MolLogP), Topological Polar Surface Area (TPSA), Quantitative Estimate of Drug-likeness (QED), Synthetic Accessibility Score (SA Score), Fraction $C_{sp3}$ ($F_{Csp3}$), H-Bond Acceptors (HBA), H-Bond Donors (HBD), Rotatable Bonds, Ring Count, Aromatic Rings.
+  - **Safety & Structural Alerts**: PAINS (Pan-Assay Interference Compounds), BRENK (unwanted reactive groups), and NIH filter alerts.
+  - **Reference Similarities**: Max and mean Tanimoto similarity against known benchmark reference inhibitors/perturbations for each test dataset.
 
-```python
-from pathlib import Path
-import os
-
-# 1. Merge raw outputs
-from utils import merge_outputs
-merge_outputs(
-    method_outputs_dir="results/method_outputs",
-    output_csv_path="results/pipeline_runs/step1_merged.csv"
-)
-
-# 2. Run molecular properties calculations
-from molecular_properties import calculate_properties_pipeline
-calculate_properties_pipeline(
-    input_csv_path="results/pipeline_runs/step1_merged.csv",
-    output_csv_path="results/pipeline_runs/step2_properties.csv",
-    output_summary_csv_path="results/pipeline_runs/step2_summary.csv"
-)
+```bash
+python TheraFlow/pipeline/2.molecular_properties.py   --input TheraFlow/method_processing/data/processed_data.csv   --output TheraFlow/outputs/molecular_properties_metrics.csv   --output_filtered TheraFlow/outputs/molecular_properties_filtered.csv
 ```
+
+---
+
+### Stage 3: InChIKey Deduplication, 3D Embedding & PoseBusters (`3.posebuster_convert_sdf.py`)
+Performs canonical InChIKey deduplication, Lipinski & complexity filtering, generates 3D geometries, and validates physical plausibility.
+
+- **Methodology**:
+  - Deduplicates molecules via canonical InChIKey.
+  - Filters molecules meeting basic drug-likeness criteria ($	ext{MW} \le 800$, $	ext{Rotatable Bonds} \le 15$).
+  - Generates 3D coordinates using RDKit **ETKDGv3** followed by **MMFF94** force field energy minimization.
+  - Saves optimized 3D structures to SDF format.
+  - Executes **PoseBusters** validation suite to verify chemical consistency, bond lengths, angles, steric clashes, and planar aromatic rings.
+
+```bash
+python TheraFlow/pipeline/3.posebuster_convert_sdf.py   --input TheraFlow/outputs/molecular_properties_metrics.csv   --output_sdf TheraFlow/outputs/filtered_3d.sdf   --output_csv TheraFlow/outputs/molecular_properties_with_posebusters.csv   --n_jobs 4
+```
+
+---
+
+### Stage 4: ChEMBL Target Profiling, Potency & Mechanism of Action (`4.potency_chembl.py`)
+Queries the ChEMBL database to retrieve structural analogs, predicted protein targets, bioactivities, and Mechanism of Action (MoA).
+
+- **Methodology**:
+  - Performs similarity searches against ChEMBL at two similarity cutoffs: $\ge 60\%$ (moderate similarity) and $\ge 80\%$ (high similarity).
+  - Retrieves associated human target proteins (UniProt IDs, Gene Symbols) and experimental bioactivity measurements ($	ext{IC}_{50}$, $	ext{EC}_{50}$, $K_i$, $K_d$, $	ext{pChEMBL}$).
+  - Extracts annotated Mechanism of Action (MoA) and pharmacological action types (inhibitor, agonist, antagonist).
+
+```bash
+python TheraFlow/pipeline/4.potency_chembl.py   --input TheraFlow/outputs/molecular_properties_filtered.csv   --output_targets TheraFlow/outputs/chembl_targets.csv   --output_potency TheraFlow/outputs/potency_scores.csv   --max_workers 5
+```
+
+---
+
+### Stage 5: DTSEA Disease DEG Reversal Scoring (`5.disease_reversal.py` / `disease_reversal.R`)
+Executes Drug-Target Set Enrichment Analysis (DTSEA) in R to quantify each candidate compound's ability to reverse disease-specific differential expression signatures.
+
+- **Methodology**:
+  - Uses the human Protein-Protein Interaction (PPI) network (`full_human_ppi.rds`).
+  - Weights drug target perturbations based on ChEMBL bioactivity ($-\log_{10}(	ext{Potency})$) and drug action mode (+1 for agonist/activator, -1 for inhibitor/antagonist).
+  - Computes DTSEA Enrichment Score (ES), Normalized Enrichment Score (NES), p-value, and FDR q-value against disease DEG profiles.
+
+```bash
+python TheraFlow/pipeline/5.disease_reversal.py   --targets_csv TheraFlow/outputs/chembl_targets.csv   --potency_csv TheraFlow/outputs/potency_scores.csv   --output TheraFlow/outputs/reversal_res.csv   --ppi_rds TheraFlow/method_processing/data/full_human_ppi.rds   --lincs_meta TheraFlow/method_processing/data/LINCS/lincs_gene_meta.csv   --test_datasets_dir TheraFlow/method_processing/data/test_datasets/rest_methods   --workers 2
+```
+
+---
+
+### Stage 6: Master Merging, Multi-Objective Pareto Optimization & RRA Consensus Ranking (`6.merging.py` / `consensus_ranking.R`)
+Consolidates all computed metric layers into a master table, performs Pareto frontier optimization across 11 property objectives, and applies Robust Rank Aggregation (RRA).
+
+- **Methodology**:
+  - Merges 2D properties, PoseBusters validity, ChEMBL targets/potency, and DTSEA reversal scores into `merged_master_dataframe.csv`.
+  - Performs 11-dimensional Pareto optimization via `rPref` (maximizing QED, Potency, Reversal NES, PoseBusters pass rate, and minimizing SA Score, Molecular Weight, and Alert penalties).
+  - Aggregates rank lists across criteria using `RobustRankAggreg` (RRA) to produce consensus prioritization scores.
+  - Selects top $N$ candidates per method and dataset (`consensus_top.csv`).
+  - Automatically exports top candidates and target sequences into AlphaFold 3 batch input JSON format (`af3_batch_input.json`).
+
+```bash
+python TheraFlow/pipeline/6.merging.py   --properties_csv TheraFlow/outputs/molecular_properties_metrics.csv   --posebusters_csv TheraFlow/outputs/molecular_properties_with_posebusters.csv   --targets_csv TheraFlow/outputs/chembl_targets.csv   --potency_csv TheraFlow/outputs/potency_scores.csv   --reversal_csv TheraFlow/outputs/reversal_res.csv   --master_csv TheraFlow/outputs/merged_master_dataframe.csv   --output_consensus TheraFlow/outputs/consensus_top.csv   --output_af3_json TheraFlow/outputs/af3_batch_input.json   --top_n 10
+```
+
+---
+
+### Stage 7: AlphaFold 3 Docking, Pocket Interface Extraction & QM/MM Setup (`7.docking_md_setup.py` / `take_interface.py`)
+Performs 3D structural validation of top consensus candidate-target complexes via AlphaFold 3 batch docking, automated active site pocket interface extraction, and QM/MM input preparation.
+
+#### 1. Batch AlphaFold 3 Inference (Multi-GPU Parallelization)
+```bash
+python TheraFlow/pipeline/7.docking_md_setup.py   --run_af3   --af3_json TheraFlow/outputs/af3_batch_input.json   --af3_dir alphafold3   --af3_output TheraFlow/outputs/af3_predictions   --gpus 0 1 2 3
+```
+
+#### 2. Pocket Interface Extraction & ORCA / xTB QM Setup
+Converts AF3 CIF predictions to PDB, runs `pdb2pqr` (PARSE forcefield, pH 7.4) to determine protonation states and partial charges, extracts residue clusters within 4.0 Å of the ligand using `take_interface.py`, and generates ORCA (DFT B3LYP/def2-SVP) and GFN2-xTB inputs:
+```bash
+python TheraFlow/pipeline/7.docking_md_setup.py   --setup_qm   --cif_dir TheraFlow/outputs/af3_predictions   --qm_output TheraFlow/outputs/docking_md_runs   --cutoff 4.0   --nproc 16
+```
+
+#### 3. Extract Docking Confidence & QM Descriptors
+Parses AF3 prediction summaries and QM calculation logs into a consolidated metrics table:
+```bash
+python TheraFlow/pipeline/7.docking_md_setup.py   --extract_metrics   --af3_output TheraFlow/outputs/af3_predictions   --output_metrics TheraFlow/outputs/docking_qm_metrics.csv
+```
+
+---
+
+## 📊 Outputs & Data Dictionary
+
+| Output File | Primary Source Stage | Key Columns & Annotations |
+|---|---|---|
+| `set_properties.csv` | Stage 1 | `method`, `test_dataset`, `validity`, `uniqueness`, `novelty_moses`, `internal_diversity` |
+| `molecular_properties_metrics.csv` | Stage 2 | `SMILES`, `MW`, `LogP`, `TPSA`, `QED`, `SA_Score`, `F_Csp3`, `HBA`, `HBD`, `pains_alert`, `brenk_alert`, `nih_alert`, `sim_mean_ref`, `sim_max_ref` |
+| `molecular_properties_filtered.csv` | Stage 2 | Subset passing Lipinski Rule of 5 and zero severe structural alerts. |
+| `filtered_3d.sdf` | Stage 3 | 3D coordinate conformers optimized with MMFF94 force field in SDF format. |
+| `molecular_properties_with_posebusters.csv` | Stage 3 | `inchikey`, `posebusters_passed`, `pb_passes_valence_check`, `pb_passes_geometry_check`, `pb_passes_clash_check` |
+| `chembl_targets.csv` | Stage 4 | `SMILES`, `chembl_id`, `target_chembl_id`, `target_gene_symbol`, `uniprot_id`, `moa_action_type`, `similarity` |
+| `potency_scores.csv` | Stage 4 | `SMILES`, `best_potency_nm`, `pChEMBL_mean`, `pChEMBL_max`, `has_nanomolar_activity`, `num_targets` |
+| `reversal_res.csv` | Stage 5 | `SMILES`, `test_dataset`, `dtsea_es`, `dtsea_nes`, `dtsea_pvalue`, `dtsea_padj`, `reversal_score` |
+| `merged_master_dataframe.csv` | Stage 6 | Complete unified dataset joining all 2D properties, 3D flags, ChEMBL potency, and DTSEA reversal metrics. |
+| `consensus_top.csv` | Stage 6 | Top ranked candidate molecules per method and dataset prioritized by Pareto frontier depth and RRA score. |
+| `af3_batch_input.json` | Stage 6 | Formatted JSON specifications for batch AlphaFold 3 complex structure prediction. |
+| `docking_qm_metrics.csv` | Stage 7 | `ranking_score`, `ligand_plddt`, `ligand_rmsd`, `homo_lumo_gap_ev`, `dipole_moment_debye`, `scf_energy_hartree` |

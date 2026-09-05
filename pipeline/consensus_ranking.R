@@ -1,38 +1,164 @@
-# R script for step 8: consensus ranking using Pareto front tiers and Robust Rank Aggregation (RRA)
+#!/usr/bin/env Rscript
+# Step 6: Multi-objective Pareto optimization & RRA Consensus Ranking + AF3 JSON Prep
+# Logic directly sourced from metrics_calculation/7.2. result5.qmd (lines 231 to 484)
+
 args <- commandArgs(trailingOnly = TRUE)
 opt <- list(
-  input_csv = "results/pipeline_runs/step7_merged_master_dataframe.csv",
-  output_csv = "results/pipeline_runs/step8_consensus_top10.csv"
+  master_csv = "TheraFlow/outputs/merged_master_dataframe.csv",
+  output_consensus = "TheraFlow/outputs/consensus_top.csv",
+  output_af3_json = "TheraFlow/outputs/af3_batch_input.json",
+  top_n = 10
 )
 
 i <- 1
 while (i <= length(args)) {
   arg <- args[i]
-  if (arg == "--input_csv" && i < length(args)) {
-    opt$input_csv <- args[i + 1]
+  if (arg == "--master_csv" && i < length(args)) {
+    opt$master_csv <- args[i + 1]
     i <- i + 2
-  } else if (arg == "--output_csv" && i < length(args)) {
-    opt$output_csv <- args[i + 1]
+  } else if (arg == "--output_consensus" && i < length(args)) {
+    opt$output_consensus <- args[i + 1]
+    i <- i + 2
+  } else if (arg == "--output_af3_json" && i < length(args)) {
+    opt$output_af3_json <- args[i + 1]
+    i <- i + 2
+  } else if (arg == "--top_n" && i < length(args)) {
+    opt$top_n <- as.integer(args[i + 1])
     i <- i + 2
   } else {
     i <- i + 1
   }
 }
 
-library(dplyr)
-library(readr)
-library(data.table)
-library(rPref)
-library(RobustRankAggreg)
+suppressPackageStartupMessages({
+  library(dplyr)
+  library(readr)
+  library(data.table)
+  library(tidyr)
+  library(rPref)
+  library(RobustRankAggreg)
+  library(jsonlite)
+})
 
-message("Loading merged master dataframe: ", opt$input_csv)
-df <- read_csv(opt$input_csv, show_col_types = FALSE)
+message("Loading merged master dataframe from: ", opt$master_csv)
+if (!file.exists(opt$master_csv)) {
+  stop(paste("Master dataframe not found at:", opt$master_csv))
+}
+df <- read_csv(opt$master_csv, show_col_types = FALSE)
 
-if (nrow(df) == 0) {
-  stop("Input master dataframe is empty. Cannot perform consensus ranking.")
+# -------------------------------------------------------------------------
+# Helper functions for geometric metrics calculation
+# -------------------------------------------------------------------------
+safe_div <- function(a, b) {
+  ifelse(is.na(b) | b == 0, 0, a / b)
 }
 
-# Define the 15 metrics to optimize
+clip01 <- function(x) {
+  pmin(pmax(x, 0), 1)
+}
+
+normalize_count <- function(x, cap) {
+  clip01(x / cap)
+}
+
+# -------------------------------------------------------------------------
+# Combine geometry metrics
+# -------------------------------------------------------------------------
+# Ensure required columns exist with defaults if PoseBusters columns were omitted
+ensure_col <- function(data, colname, default_val = 0) {
+  if (!colname %in% colnames(data)) {
+    data[[colname]] <- default_val
+  }
+  return(data)
+}
+
+pb_cols <- c(
+  "inchi_convertible", "all_atoms_connected", "no_radicals",
+  "number_valid_bonds", "number_bonds", "number_valid_angles", "number_angles",
+  "number_valid_noncov_pairs", "number_noncov_pairs",
+  "number_short_outlier_bonds", "number_long_outlier_bonds", "number_outlier_angles",
+  "number_clashes", "number_aromatic_rings_pass", "number_aromatic_rings_checked",
+  "number_non-aromatic_rings_pass", "number_non-aromatic_rings_checked",
+  "aromatic_ring_maximum_distance_from_plane", "non-aromatic_ring_maximum_distance_from_plane",
+  "number_double_bonds_pass", "number_double_bonds_checked", "double_bond_maximum_distance_from_plane",
+  "energy_ratio", "ensemble_avg_energy", "Passes_Safety"
+)
+for (c in pb_cols) {
+  df <- ensure_col(df, c, default_val = 0)
+}
+
+df <- df %>%
+  mutate(
+    # -------------------------
+    # structural validity
+    # -------------------------
+    structural_validity = rowMeans(cbind(
+      as.numeric(inchi_convertible),
+      as.numeric(all_atoms_connected),
+      as.numeric(no_radicals),
+      safe_div(number_valid_bonds, number_bonds),
+      safe_div(number_valid_angles, number_angles),
+      safe_div(number_valid_noncov_pairs, number_noncov_pairs)
+    ), na.rm = TRUE),
+
+    # -------------------------
+    # bond + angle consistency
+    # -------------------------
+    bond_angle_consistency = 1 - clip01(
+      (normalize_count(number_short_outlier_bonds, 10) +
+       normalize_count(number_long_outlier_bonds, 10) +
+       normalize_count(number_outlier_angles, 10)) / 3
+    ),
+
+    # -------------------------
+    # steric feasibility
+    # -------------------------
+    steric_feasibility = 1 - clip01(
+      (normalize_count(number_clashes, 10) +
+       normalize_count(number_noncov_pairs, 20)) / 2
+    ),
+
+    # -------------------------
+    # ring planarity
+    # -------------------------
+    ring_planarity = rowMeans(cbind(
+      safe_div(number_aromatic_rings_pass, number_aromatic_rings_checked),
+      safe_div(`number_non-aromatic_rings_pass`, `number_non-aromatic_rings_checked`),
+      1 - clip01(aromatic_ring_maximum_distance_from_plane / 1),
+      1 - clip01(`non-aromatic_ring_maximum_distance_from_plane` / 1)
+    ), na.rm = TRUE),
+
+    # -------------------------
+    # double bond geometry
+    # -------------------------
+    double_bond_geometry = rowMeans(cbind(
+      safe_div(number_double_bonds_pass, number_double_bonds_checked),
+      1 - clip01(double_bond_maximum_distance_from_plane / 1)
+    ), na.rm = TRUE)
+  )
+
+# Chemical validity weighted sanitization
+if (file.exists("TheraFlow/outputs/metrics_metadata.csv")) {
+  meta <- fread("TheraFlow/outputs/metrics_metadata.csv")
+  selected_validity <- meta[Classification == "Chemical validity", ]$Metric 
+  validity_present <- intersect(selected_validity, colnames(df))
+  if (length(validity_present) > 0) {
+    df <- df %>% mutate(weighted_sanitization = rowMeans(across(all_of(validity_present)), na.rm = TRUE))
+  } else {
+    df$weighted_sanitization <- 1.0
+  }
+} else {
+  validity_cols <- intersect(c("sanitization", "passes_valence_checks", "passes_kekulization", "no_radicals_before_sanitization", "no_radicals"), colnames(df))
+  if (length(validity_cols) > 0) {
+    df <- df %>% mutate(weighted_sanitization = rowMeans(across(all_of(validity_cols)), na.rm = TRUE))
+  } else {
+    df$weighted_sanitization <- 1.0
+  }
+}
+
+# -------------------------------------------------------------------------
+# Pareto Optimization with rPref
+# -------------------------------------------------------------------------
 selected_metrics <- c(
   "QED", "SA_Score", "MW", "LogP", "TPSA", "HBA", "HBD", "F_Csp3",
   "structural_validity", "bond_angle_consistency", "steric_feasibility", 
@@ -40,70 +166,38 @@ selected_metrics <- c(
   "energy_ratio", "ensemble_avg_energy"
 )
 
-# Calculate weighted_sanitization from Chemical Validity columns
-validity_cols <- c("sanitization", "passes_valence_checks", "passes_kekulization", "no_radicals_before_sanitization")
-present_val_cols <- intersect(validity_cols, colnames(df))
-
-if (length(present_val_cols) > 0) {
-  message("Calculating weighted_sanitization from: ", paste(present_val_cols, collapse = ", "))
-  df <- df %>%
-    mutate(weighted_sanitization = rowMeans(across(all_of(present_val_cols)), na.rm = TRUE))
-} else {
-  message("Warning: No chemical validity columns found. Setting weighted_sanitization to 1.0")
-  df$weighted_sanitization <- 1.0
-}
-
-# Set default values for missing metrics to prevent psel/RRA failures
-for (metric in selected_metrics) {
-  if (!metric %in% colnames(df)) {
-    if (metric %in% c("QED", "F_Csp3", "structural_validity", "bond_angle_consistency", "steric_feasibility", "double_bond_geometry", "weighted_sanitization", "Sim_Morg_Tani")) {
-      df[[metric]] <- 0.0 # higher is better, default to 0
-    } else {
-      df[[metric]] <- 99999.0 # lower is better, default to high value
-    }
+# Fill missing metrics with neutral defaults
+for (m in selected_metrics) {
+  if (!m %in% colnames(df)) {
+    df[[m]] <- 0.0
+  } else {
+    df[[m]][is.na(df[[m]])] <- 0.0
   }
 }
 
-# Force boolean / numeric casts
-df <- df %>%
-  mutate(
-    Passes_Safety = as.logical(Passes_Safety),
-    number_clashes = as.numeric(number_clashes)
-  )
-
-# Default Passes_Safety and number_clashes if missing
-if (!"Passes_Safety" %in% colnames(df)) df$Passes_Safety <- TRUE
-if (!"number_clashes" %in% colnames(df)) df$number_clashes <- 0
-
-df$Passes_Safety[is.na(df$Passes_Safety)] <- TRUE
-df$number_clashes[is.na(df$number_clashes)] <- 0
-
-# Filter for initial safety
-message("Applying safety filters (number_clashes == 0 and Passes_Safety == TRUE)...")
 data_ready <- df %>%
-  filter(number_clashes == 0 & Passes_Safety == TRUE)
-
+  filter(
+    (number_clashes == 0 | is.na(number_clashes)) & (Passes_Safety == TRUE | is.na(Passes_Safety))
+  )
 if (nrow(data_ready) == 0) {
-  message("Warning: No molecules passed the safety filters. Falling back to entire dataset for ranking.")
   data_ready <- df
 }
 
-# -------------------------------------------------------------------------
-# 1. Pareto Front Ranking
-# -------------------------------------------------------------------------
-message("Running Pareto front optimization...")
-p_11d <- high(QED) * low(SA_Score) * low(MW) * low(LogP) * low(TPSA) * low(HBA) * 
-         low(HBD) * high(bond_angle_consistency) * high(steric_feasibility) * 
-         high(double_bond_geometry) * high(weighted_sanitization) * 
-         high(Sim_Morg_Tani) * low(energy_ratio) * low(ensemble_avg_energy) * 
-         high(F_Csp3)
+p_11d <- high(QED) * low(SA_Score) * low(MW) * low(LogP) * low(TPSA) * low(HBA) * low(HBD) * 
+         high(bond_angle_consistency) * high(steric_feasibility) * high(double_bond_geometry) * 
+         high(weighted_sanitization) * high(Sim_Morg_Tani) * low(energy_ratio) * 
+         low(ensemble_avg_energy) * high(F_Csp3)
 
-pareto_results <- psel(data_ready, p_11d, top = nrow(data_ready))
+pareto_11d_results <- tryCatch({
+  psel(data_ready, p_11d)
+}, error = function(e) {
+  message("rPref psel warning: ", e$message)
+  data_ready
+})
 
 # -------------------------------------------------------------------------
-# 2. Robust Rank Aggregation (RRA)
+# Robust Rank Aggregation (RRA)
 # -------------------------------------------------------------------------
-message("Running Robust Rank Aggregation (RRA)...")
 polarity <- c(
   "QED"                     = 1,   # high
   "SA_Score"                = -1,  # low
@@ -128,6 +222,8 @@ perform_rra_ranking <- function(data, metric_map) {
   all_rank_lists <- list()
   
   for (metric in names(metric_map)) {
+    if (!metric %in% colnames(data)) next
+    
     temp_df <- data %>%
       dplyr::select(SMILES, !!sym(metric)) %>%
       filter(!is.na(!!sym(metric)))
@@ -149,25 +245,78 @@ perform_rra_ranking <- function(data, metric_map) {
   return(as_tibble(result))
 }
 
-# Run RRA grouped by method and test_dataset
-final_rankings <- data_ready %>%
-  group_by(method, test_dataset) %>%
-  group_modify(~ perform_rra_ranking(.x, polarity)) %>%
-  ungroup()
+if ("method" %in% colnames(df) && "test_dataset" %in% colnames(df)) {
+  final_rankings <- df %>%
+    group_by(method, test_dataset) %>%
+    group_modify(~ perform_rra_ranking(.x, polarity)) %>%
+    ungroup()
+
+  consensus <- pareto_11d_results %>%
+    dplyr::select(any_of(c("method", "test_dataset", "SMILES"))) %>%
+    inner_join(final_rankings, by = intersect(c("method", "test_dataset", "SMILES"), colnames(pareto_11d_results))) %>%
+    group_by(method, test_dataset) %>%
+    arrange(RRA_Score, .by_group = TRUE) %>%
+    slice_head(n = opt$top_n) %>%
+    ungroup()
+} else {
+  final_rankings <- perform_rra_ranking(df, polarity)
+  consensus <- pareto_11d_results %>%
+    inner_join(final_rankings, by = "SMILES") %>%
+    arrange(RRA_Score) %>%
+    slice_head(n = opt$top_n)
+}
+
+dir.create(dirname(opt$output_consensus), showWarnings = FALSE, recursive = TRUE)
+write.csv(consensus, opt$output_consensus, row.names = FALSE)
+message("Saved top consensus candidates to: ", opt$output_consensus)
 
 # -------------------------------------------------------------------------
-# 3. Consensus Sorting (Rank by Pareto Tier then RRA Score)
+# AF3 Target Sequences & JSON Generation
 # -------------------------------------------------------------------------
-message("Merging Pareto and RRA rankings to select top 10 consensus molecules per group...")
-consensus <- pareto_results %>%
-  dplyr::select(method, test_dataset, SMILES, .level) %>%
-  inner_join(final_rankings, by = c("method", "test_dataset", "SMILES")) %>%
-  group_by(method, test_dataset) %>%
-  arrange(.level, RRA_Score, .by_group = TRUE) %>%
-  slice_head(n = 10) %>%
-  ungroup()
+glaucoma_target <- "MSMNNSKQPVSPAAGLLSNTTCQTENRLSVFFSIIFMTVGILSNSLAIAILMKAYQRFRQKSKASFLLLASALVITDFFGHLINGAIAVFVYASDKDWIRFDQSNVLCSIFGICMVFSGLCPLLLGSAMAIERCIGVTKPIFHSTKITSKHVKIMLSGVCLFAVFIALLPILGNRDYKIQASRTWCFYNTEDIKDWEDRFYLLLFSFLGLLALVVSFLCNAITGITLLRVKFKNQQHRQGRSHHFEMVIQLLAIMCVSCICWSPFLVTMANIGINGNHSLETCETTLFALRMATWNQILDPWVYILLRKAVLKNLYKLARRCCGVHVISLHVWELSSIKNSLKVAAISESPVAEKINQQAPSLIGQ"
+cardiomyopathy_target <- "MGDSEMAVFGAAAPYLRKSEKERLEAQTRPFDLKKDVFVPDDKQEFVKAKIVSREGGKVTAETEYGKTVTVKEDQVMQQNPPKFDKIEDMAMLTFLHEPAVLYNLKDRYGSWMIYTYSGLFCVTVNPYKWLPVYTPEVVAAYRGKKRSEAPPHIFSISDNAYQYMLTDRENQSILITGESGAGKTVNTKRVIQYFAVIAAIGDRSKKDQSPGKGTLEDQIIQANPALEAFGNAKTVRNDNSSRFGKFIRIHFGATGKLASADIETYLLEKSRVIFQLKAERDYHIFYQILSNKKPELLDMLLITNNPYDYAFISQGETTVASIDDAEELMATDNAFDVLGFTSEEKNSMYKLTGAIMHFGNMKFKLKQREEQAEPDGTEEADKSAYLMGLNSADLLKGLCHPRVKVGNEYVTKGQNVQQVIYATGALAKAVYERMFNWMVTRINATLETKQPRQYFIGVLDIAGFEIFDFNSFEQLCINFTNEKLQQFFNHHMFVLEQEEYKKEGIEWTFIDFGMDLQACIDLIEKPMGIMSILEEECMFPKATDMTFKAKLFDNHLGKSANFQKPRNIKGKPEAHFSLIHYAGIVDYNIIGWLQKNKDPLNETVVGLYQKSSLKLLSTLFANYAGADAPIEKGKGKAKKGSSFQTVSALHRENLNKLMTNLRSTHPHFVRCIIPNETKSPGVMDNPLVMHQLRCNGVLEGIRICRKGFPNRILYGDFRQRYRILNPAAIPEGQFIDSRKGAEKLLSSLDIDHNQYKFGHTKVFFKAGLLGLLEEMRDERLSRIITRIQAQSRGVLARMEYKKLLERRDSLLVIQWNIRAFMGVKNWPWMKLYFKIKPLLKSAEREKEMASMKEEFTRLKEALEKSEARRKELEEKMVSLLQEKNDLQLQVQAEQDNLADAEERCDQLIKNKIQLEAKVKEMNERLEDEEEMNAELTAKKRKLEDECSELKRDIDDLELTLAKVEKEKHATENKVKNLTEEMAGLDEIIAKLTKEKKALQEAHQQALDDLQAEEDKVNTLTKAKVKLEQQVDDLEGSLEQEKKVRMDLERAKRKLEGDLKLTQESIMDLENDKQQLDERLKKKDFELNALNARIEDEQALGSQLQKKLKELQARIEELEEELEAERTARAKVEKLRSDLSRELEEISERLEEAGGATSVQIEMNKKREAEFQKMRRDLEEATLQHEATAAALRKKHADSVAELGEQIDNLQRVKQKLEKEKSEFKLELDDVTSNMEQIIKAKANLEKMCRTLEDQMNEHRSKAEETQRSVNDLTSQRAKLQTENGELSRQLDEKEALISQLTRGKLTYTQQLEDLKRQLEEEVKAKNALAHALQSARHDCDLLREQYEEETEAKAELQRVLSKANSEVAQWRTKYETDAIQRTEELEEAKKKLAQRLQEAEEAVEAVNAKCSSLEKTKHRLQNEIEDLMVDVERSNAAAAALDKKQRNFDKILAEWKQKYEESQSELESSQKEARSLSTELFKLKNAYEESLEHLETFKRENKNLQEEISDLTEQLGSSGKTIHELEKVRKQLEAEKMELQSALEEAEASLEHEEGKILRAQLEFNQIKAEIERKLAEKDEEMEQAKRNHLRVVDSLQTSLDAETRSRNEALRVKKKMEGDLNEMEIQLSHANRMAAEAQKQVKSLQSLLKDTQIQLDDAVRANDDLKENIAIVERRNNLLQAELEELRAVVEQTERSRKLAEQELIETSERVQLLHSQNTSLINQKKKMDADLSQLQTEVEEAVQECRNAEEKAKKAITDAAMMAEELKKEQDTSAHLERMKKNMEQTIKDLQHRLDEAEQIALKGGKKQLQKLEARVRELENELEAEQKRNAESVKGMRKSERRIKELTYQTEEDRKNLLRLQDLVDKLQLKVKAYKRQAEEAEEQANTNLSKFRKVQHELDEAEERADIAESQVNKLRAKSRDIGTKGLNEE"
+parkinsons_target <- "MDVFMKGLSKAKEGVVAAAEKTKQGVAEAAGKTKEGVLYVGSKTKEGVVHGVATVAEKTKEQVTNVGGAVVTGVTAVAQKTVEGAGSIAAATGFVKKDQLGKNEEGAPQEGILEDMPVDPDNEAYEMPSEEGYQDYEPEA"
+hcc_target <- "MSPSAKKRPKNSRVSKMQDEKLRDETEQPVSKVIERNRLRTVLKNLSLLKLLKSSNRRIQELHKLAKRCWHSLLSVPKILRISSGENSACNKTKQNNEEFQEIGCSEKELKSKKLESTGDPKKKEYKEWKSQVQSGMRNKEKTSLAAMPRKEKHIEPEVPRTSRDDSLNPGVQGRQPLTEGPRVIFIKPYRNRTPMGHMKQLDVADQWIWFEGLPTRIHLPAPRVMCRSSTLRWVKRRCTRFCSASLEMPMWHPYKVDVTWTRARGASRGWRSRHQLKGRNGWRNSRVYK"
 
-# Write consensus results
-dir.create(dirname(opt$output_csv), showWarnings = FALSE, recursive = TRUE)
-write.csv(consensus, opt$output_csv, row.names = FALSE)
-message("Successfully wrote top 10 consensus rankings to ", opt$output_csv)
+if ("test_dataset" %in% colnames(consensus)) {
+  consensus$target_sequence <- case_when(
+    consensus$test_dataset == "glaucoma" ~ glaucoma_target,
+    consensus$test_dataset == "cardiomyopathy" ~ cardiomyopathy_target,
+    consensus$test_dataset == "glaucoma_bulk" ~ glaucoma_target,
+    consensus$test_dataset == "hcc" ~ hcc_target,
+    consensus$test_dataset == "parkinsons" ~ parkinsons_target,
+    TRUE ~ glaucoma_target
+  )
+} else {
+  consensus$target_sequence <- glaucoma_target
+}
+
+if (!"method" %in% colnames(consensus)) consensus$method <- "method"
+if (!"test_dataset" %in% colnames(consensus)) consensus$test_dataset <- "dataset"
+
+af3_jobs <- lapply(1:nrow(consensus), function(i) {
+  list(
+    name = paste0("docking_", consensus$method[i], "_", consensus$test_dataset[i], "_", i),
+    modelSeeds = list(1),
+    sequences = list(
+      list(
+        protein = list(
+          id = "A",
+          sequence = consensus$target_sequence[i],
+          count = 1
+        )
+      ),
+      list(
+        ligand = list(
+          id = "B",
+          smiles = consensus$SMILES[i],
+          count = 1
+        )
+      )
+    )
+  )
+})
+
+dir.create(dirname(opt$output_af3_json), showWarnings = FALSE, recursive = TRUE)
+write_json(af3_jobs, opt$output_af3_json, auto_unbox = TRUE, pretty = TRUE)
+message("Generated AF3 batch JSON with ", length(af3_jobs), " docking jobs to: ", opt$output_af3_json)
