@@ -9,13 +9,13 @@ The `TheraFlow/pipeline/` package is an end-to-end, modular benchmarking, filter
 2. [Prerequisites & Environment Setup](#-prerequisites--environment-setup)
 3. [Master Orchestrator (One-Click Execution)](#-master-orchestrator-one-click-execution)
 4. [Step-by-Step Execution Guide](#-step-by-step-execution-guide)
-   - [Stage 1: Generative Performance Macro-Metrics](#stage-1-generative-performance-macro-metrics-1generative_perfpy)
-   - [Stage 2: 2D Physicochemical Properties, Safety Filters & Similarities](#stage-2-2d-physicochemical-properties-safety-filters--similarities-2molecular_propertiespy)
-   - [Stage 3: InChIKey Deduplication, 3D Embedding & PoseBusters](#stage-3-inchikey-deduplication-3d-embedding--posebusters-3posebuster_convert_sdfpy)
-   - [Stage 4: ChEMBL Target Profiling, Potency & Mechanism of Action](#stage-4-chembl-target-profiling-potency--mechanism-of-action-4potency_chemblpy)
-   - [Stage 5: DTSEA Disease DEG Reversal Scoring](#stage-5-dtsea-disease-deg-reversal-scoring-5disease_reversalpy--disease_reversalr)
-   - [Stage 6: Master Merging, Multi-Objective Pareto Optimization & RRA Consensus Ranking](#stage-6-master-merging-multi-objective-pareto-optimization--rra-consensus-ranking-6mergingpy--consensus_rankingr)
-   - [Stage 7: AlphaFold 3 Docking, Pocket Interface Extraction & QM/MM Setup](#stage-7-alphafold-3-docking-pocket-interface-extraction--qmmm-setup-7docking_md_setuppy--take_interfacepy)
+   - [Step 1: Generative Performance Macro-Metrics](#stage-1-generative-performance-macro-metrics-1generative_perfpy)
+   - [Step 2: 2D Physicochemical Properties, Safety Filters & Similarities](#stage-2-2d-physicochemical-properties-safety-filters--similarities-2molecular_propertiespy)
+   - [Step 3: InChIKey Deduplication, 3D Embedding & PoseBusters](#stage-3-inchikey-deduplication-3d-embedding--posebusters-3posebuster_convert_sdfpy)
+   - [Step 4: ChEMBL Target Profiling, Potency & Mechanism of Action](#stage-4-chembl-target-profiling-potency--mechanism-of-action-4potency_chemblpy)
+   - [Step 5: DTSEA Disease DEG Reversal Scoring](#stage-5-dtsea-disease-deg-reversal-scoring-5disease_reversalpy--disease_reversalr)
+   - [Step 6: Master Merging, Multi-Objective Pareto Optimization & RRA Consensus Ranking](#stage-6-master-merging-multi-objective-pareto-optimization--rra-consensus-ranking-6mergingpy--consensus_rankingr)
+   - [Step 7: AlphaFold 3 Docking, Pocket Interface Extraction & QM/MM Setup](#stage-7-alphafold-3-docking-pocket-interface-extraction--qmmm-setup-7docking_md_setuppy--take_interfacepy)
 5. [Outputs & Data Dictionary](#-outputs--data-dictionary)
 
 ---
@@ -40,15 +40,15 @@ Key Python libraries:
 - `chembl-webresource-client` (Programmatic ChEMBL bioactivity and target API access)
 - `pandas`, `numpy`, `scipy`, `joblib`, `tqdm` (Multiprocessing & data manipulation)
 
-### 2. R Environment (for Stages 5 & 6)
-Stages 5 (DTSEA) and 6 (Consensus Ranking) call optimized R scripts. Ensure R ($\ge 4.0$) is installed with the following packages:
+### 2. R Environment (for Steps 5 & 6)
+Steps 5 (DTSEA) and 6 (Consensus Ranking) call optimized R scripts. Ensure R ($\ge 4.0$) is installed with the following packages:
 
 ```R
 install.packages(c("dplyr", "readr", "data.table", "tidyr", "rPref", "RobustRankAggreg", "jsonlite", "igraph", "purrr", "stringr", "BiocManager"))
 BiocManager::install("DTSEA")
 ```
 
-### 3. Structural Tools (for Stage 7, Optional)
+### 3. Structural Tools (for Step 7, Optional)
 - **AlphaFold 3**: Clone repository and configure inference virtual environment.
 - **PDB2PQR** (`pdb2pqr`): Used for PARSE force-field protonation and partial charge calculation at pH 7.4.
 - **ORCA** / **xTB**: Quantum chemistry calculation packages.
@@ -57,7 +57,7 @@ BiocManager::install("DTSEA")
 
 ## ⚡ Master Orchestrator (One-Click Execution)
 
-You can execute the entire pipeline (Stages 1 through 6, and optionally Stage 7) with a single command. The master orchestrator runs all stages sequentially, passes intermediate files between stages, generates consensus candidate rankings, and merges all calculated metrics back into your input candidate dataset with an automatic timestamped backup:
+You can execute the entire pipeline (Step 1 through 6, and optionally Step 7) with a single command. The master orchestrator runs all steps sequentially, passes intermediate files between steps, generates consensus candidate rankings, and merges all calculated metrics back into your input candidate dataset with an automatic timestamped backup:
 
 ```bash
 # Run full end-to-end evaluation & merge annotations back into processed_data.csv
@@ -71,23 +71,23 @@ python TheraFlow/run_pipeline.py   --input TheraFlow/method_processing/data/proc
 | `--output_dir` | `str` | `TheraFlow/outputs` | Directory to store all intermediate and final outputs. |
 | `--output_merged` | `str` | `TheraFlow/method_processing/data/processed_data.csv` | Path to output dataset merged with all computed annotations. |
 | `--backup` | `bool` | `True` | Automatically create a `.backup.csv` file before overwriting target dataset. |
-| `--steps` | `str` | `1,2,3,4,5,6` | Comma-separated list of stage numbers to run (e.g., `--steps 1,2,3`). |
-| `--n_jobs_3d` | `int` | `4` | Parallel worker processes for 3D ETKDGv3 embedding in Stage 3. |
-| `--chembl_workers` | `int` | `5` | Concurrent threads for ChEMBL queries in Stage 4. |
-| `--r_workers` | `int` | `2` | Parallel processes for DTSEA calculations in Stage 5. |
-| `--top_n_consensus` | `int` | `10` | Number of top consensus candidates selected per method/dataset in Stage 6. |
-| `--run_af3` | `flag` | `False` | Launch AlphaFold 3 batch docking inference in Stage 7. |
-| `--extract_qm` | `flag` | `False` | Extract AF3 docking and QM metrics in Stage 7. |
+| `--steps` | `str` | `1,2,3,4,5,6` | Comma-separated list of step numbers to run (e.g., `--steps 1,2,3`). |
+| `--n_jobs_3d` | `int` | `4` | Parallel worker processes for 3D ETKDGv3 embedding in step 3. |
+| `--chembl_workers` | `int` | `5` | Concurrent threads for ChEMBL queries in step 4. |
+| `--r_workers` | `int` | `2` | Parallel processes for DTSEA calculations in step 5. |
+| `--top_n_consensus` | `int` | `10` | Number of top consensus candidates selected per method/dataset in step 6. |
+| `--run_af3` | `flag` | `False` | Launch AlphaFold 3 batch docking inference in step 7. |
+| `--extract_qm` | `flag` | `False` | Extract AF3 docking and QM metrics in step 7. |
 
 ---
 
 ## 🚀 Step-by-Step Execution Guide
 
-You can also run each pipeline stage independently as a modular command-line tool.
+You can also run each pipeline step independently as a modular command-line tool.
 
 ---
 
-### Stage 1: Generative Performance Macro-Metrics (`1.generative_perf.py`)
+### Step 1: Generative Performance Macro-Metrics (`1.generative_perf.py`)
 Computes distribution-level quality and diversity metrics grouped by generative `method` and `test_dataset`.
 
 - **Metrics Computed**:
@@ -102,7 +102,7 @@ python TheraFlow/pipeline/1.generative_perf.py   --input TheraFlow/method_proces
 
 ---
 
-### Stage 2: 2D Physicochemical Properties, Safety Filters & Similarities (`2.molecular_properties.py`)
+### Step 2: 2D Physicochemical Properties, Safety Filters & Similarities (`2.molecular_properties.py`)
 Evaluates single-molecule 2D descriptors, drug-likeness rules, structural alerts, and reference similarity.
 
 - **Metrics Computed**:
@@ -116,7 +116,7 @@ python TheraFlow/pipeline/2.molecular_properties.py   --input TheraFlow/method_p
 
 ---
 
-### Stage 3: InChIKey Deduplication, 3D Embedding & PoseBusters (`3.posebuster_convert_sdf.py`)
+### Step 3: InChIKey Deduplication, 3D Embedding & PoseBusters (`3.posebuster_convert_sdf.py`)
 Performs canonical InChIKey deduplication, Lipinski & complexity filtering, generates 3D geometries, and validates physical plausibility.
 
 - **Methodology**:
@@ -132,7 +132,7 @@ python TheraFlow/pipeline/3.posebuster_convert_sdf.py   --input TheraFlow/output
 
 ---
 
-### Stage 4: ChEMBL Target Profiling, Potency & Mechanism of Action (`4.potency_chembl.py`)
+### Step 4: ChEMBL Target Profiling, Potency & Mechanism of Action (`4.potency_chembl.py`)
 Queries the ChEMBL database to retrieve structural analogs, predicted protein targets, bioactivities, and Mechanism of Action (MoA).
 
 - **Methodology**:
@@ -146,7 +146,7 @@ python TheraFlow/pipeline/4.potency_chembl.py   --input TheraFlow/outputs/molecu
 
 ---
 
-### Stage 5: DTSEA Disease DEG Reversal Scoring (`5.disease_reversal.py` / `disease_reversal.R`)
+### Step 5: DTSEA Disease DEG Reversal Scoring (`5.disease_reversal.py` / `disease_reversal.R`)
 Executes Drug-Target Set Enrichment Analysis (DTSEA) in R to quantify each candidate compound's ability to reverse disease-specific differential expression signatures.
 
 - **Methodology**:
@@ -160,7 +160,7 @@ python TheraFlow/pipeline/5.disease_reversal.py   --targets_csv TheraFlow/output
 
 ---
 
-### Stage 6: Master Merging, Multi-Objective Pareto Optimization & RRA Consensus Ranking (`6.merging.py` / `consensus_ranking.R`)
+### Step 6: Master Merging, Multi-Objective Pareto Optimization & RRA Consensus Ranking (`6.merging.py` / `consensus_ranking.R`)
 Consolidates all computed metric layers into a master table, performs Pareto frontier optimization across 11 property objectives, and applies Robust Rank Aggregation (RRA).
 
 - **Methodology**:
@@ -176,7 +176,7 @@ python TheraFlow/pipeline/6.merging.py   --properties_csv TheraFlow/outputs/mole
 
 ---
 
-### Stage 7: AlphaFold 3 Docking, Pocket Interface Extraction & QM/MM Setup (`7.docking_md_setup.py` / `take_interface.py`)
+### Step 7: AlphaFold 3 Docking, Pocket Interface Extraction & QM/MM Setup (`7.docking_md_setup.py` / `take_interface.py`)
 Performs 3D structural validation of top consensus candidate-target complexes via AlphaFold 3 batch docking, automated active site pocket interface extraction, and QM/MM input preparation.
 
 #### 1. Batch AlphaFold 3 Inference (Multi-GPU Parallelization)
@@ -200,17 +200,17 @@ python TheraFlow/pipeline/7.docking_md_setup.py   --extract_metrics   --af3_outp
 
 ## 📊 Outputs & Data Dictionary
 
-| Output File | Primary Source Stage | Key Columns & Annotations |
+| Output File | Primary Source Step | Key Columns & Annotations |
 |---|---|---|
-| `set_properties.csv` | Stage 1 | `method`, `test_dataset`, `validity`, `uniqueness`, `novelty_moses`, `internal_diversity` |
-| `molecular_properties_metrics.csv` | Stage 2 | `SMILES`, `MW`, `LogP`, `TPSA`, `QED`, `SA_Score`, `F_Csp3`, `HBA`, `HBD`, `pains_alert`, `brenk_alert`, `nih_alert`, `sim_mean_ref`, `sim_max_ref` |
-| `molecular_properties_filtered.csv` | Stage 2 | Subset passing Lipinski Rule of 5 and zero severe structural alerts. |
-| `filtered_3d.sdf` | Stage 3 | 3D coordinate conformers optimized with MMFF94 force field in SDF format. |
-| `molecular_properties_with_posebusters.csv` | Stage 3 | `inchikey`, `posebusters_passed`, `pb_passes_valence_check`, `pb_passes_geometry_check`, `pb_passes_clash_check` |
-| `chembl_targets.csv` | Stage 4 | `SMILES`, `chembl_id`, `target_chembl_id`, `target_gene_symbol`, `uniprot_id`, `moa_action_type`, `similarity` |
-| `potency_scores.csv` | Stage 4 | `SMILES`, `best_potency_nm`, `pChEMBL_mean`, `pChEMBL_max`, `has_nanomolar_activity`, `num_targets` |
-| `reversal_res.csv` | Stage 5 | `SMILES`, `test_dataset`, `dtsea_es`, `dtsea_nes`, `dtsea_pvalue`, `dtsea_padj`, `reversal_score` |
-| `merged_master_dataframe.csv` | Stage 6 | Complete unified dataset joining all 2D properties, 3D flags, ChEMBL potency, and DTSEA reversal metrics. |
-| `consensus_top.csv` | Stage 6 | Top ranked candidate molecules per method and dataset prioritized by Pareto frontier depth and RRA score. |
-| `af3_batch_input.json` | Stage 6 | Formatted JSON specifications for batch AlphaFold 3 complex structure prediction. |
-| `docking_qm_metrics.csv` | Stage 7 | `ranking_score`, `ligand_plddt`, `ligand_rmsd`, `homo_lumo_gap_ev`, `dipole_moment_debye`, `scf_energy_hartree` |
+| `set_properties.csv` | Step 1 | `method`, `test_dataset`, `validity`, `uniqueness`, `novelty_moses`, `internal_diversity` |
+| `molecular_properties_metrics.csv` | Step 2 | `SMILES`, `MW`, `LogP`, `TPSA`, `QED`, `SA_Score`, `F_Csp3`, `HBA`, `HBD`, `pains_alert`, `brenk_alert`, `nih_alert`, `sim_mean_ref`, `sim_max_ref` |
+| `molecular_properties_filtered.csv` | Step 2 | Subset passing Lipinski Rule of 5 and zero severe structural alerts. |
+| `filtered_3d.sdf` | Step 3 | 3D coordinate conformers optimized with MMFF94 force field in SDF format. |
+| `molecular_properties_with_posebusters.csv` | Step 3 | `inchikey`, `posebusters_passed`, `pb_passes_valence_check`, `pb_passes_geometry_check`, `pb_passes_clash_check` |
+| `chembl_targets.csv` | Step 4 | `SMILES`, `chembl_id`, `target_chembl_id`, `target_gene_symbol`, `uniprot_id`, `moa_action_type`, `similarity` |
+| `potency_scores.csv` | Step 4 | `SMILES`, `best_potency_nm`, `pChEMBL_mean`, `pChEMBL_max`, `has_nanomolar_activity`, `num_targets` |
+| `reversal_res.csv` | Step 5 | `SMILES`, `test_dataset`, `dtsea_es`, `dtsea_nes`, `dtsea_pvalue`, `dtsea_padj`, `reversal_score` |
+| `merged_master_dataframe.csv` | Step 6 | Complete unified dataset joining all 2D properties, 3D flags, ChEMBL potency, and DTSEA reversal metrics. |
+| `consensus_top.csv` | Step 6 | Top ranked candidate molecules per method and dataset prioritized by Pareto frontier depth and RRA score. |
+| `af3_batch_input.json` | Step 6 | Formatted JSON specifications for batch AlphaFold 3 complex structure prediction. |
+| `docking_qm_metrics.csv` | Step 7 | `ranking_score`, `ligand_plddt`, `ligand_rmsd`, `homo_lumo_gap_ev`, `dipole_moment_debye`, `scf_energy_hartree` |
