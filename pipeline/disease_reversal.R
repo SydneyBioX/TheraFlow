@@ -6,6 +6,7 @@ suppressPackageStartupMessages({
   library(data.table)
   library(DTSEA)
   library(igraph)
+  library(parallel)
 })
 
 args <- commandArgs(trailingOnly = TRUE)
@@ -25,7 +26,7 @@ opt <- list(
   ppi_rds           = parse_arg("--ppi_rds", "TheraFlow/method_processing/data/full_human_ppi.rds"),
   lincs_meta        = parse_arg("--lincs_meta", "TheraFlow/method_processing/data/LINCS/lincs_gene_meta.csv"),
   test_datasets_dir = parse_arg("--test_datasets_dir", "TheraFlow/method_processing/data/test_datasets/rest_methods"),
-  workers           = as.numeric(parse_arg("--workers", "2"))
+  workers           = as.numeric(parse_arg("--workers", "7"))
 )
 
 ensure_ppi_network <- function(ppi_path) {
@@ -80,7 +81,6 @@ get_disease_signature <- function(test_dataset, test_datasets_dir, id2sym) {
   if (is.null(matched_file)) {
     stop(paste("Disease signature file not found for dataset:", test_dataset))
   }
-  message("Using disease signature: ", matched_file)
   return(process_lincs_signatures(matched_file, id2sym))
 }
 
@@ -93,19 +93,17 @@ id2sym <- setNames(as.character(meta[['pr_gene_symbol']]), as.character(meta[['p
 message("Loading predicted targets: ", opt$targets_csv)
 targets_df <- read_csv(opt$targets_csv, show_col_types = FALSE)
 
-if (!("method" %in% colnames(targets_df)) || !("test_dataset" %in% colnames(targets_df))) {
-  props_candidates <- c(
-    "TheraFlow/outputs/molecular_properties_metrics.csv",
-    "TheraFlow/method_processing/data/processed_data.csv"
-  )
-  for (pf in props_candidates) {
-    if (file.exists(pf)) {
-      p_df <- read_csv(pf, show_col_types = FALSE) %>% 
-        dplyr::select(any_of(c("SMILES", "method", "test_dataset"))) %>% 
-        distinct()
-      targets_df <- targets_df %>% left_join(p_df, by = "SMILES")
-      break
-    }
+props_candidates <- c(
+  "TheraFlow/outputs/molecular_properties_metrics.csv",
+  "TheraFlow/method_processing/data/processed_data.csv"
+)
+for (pf in props_candidates) {
+  if (file.exists(pf)) {
+    p_df <- read_csv(pf, show_col_types = FALSE) %>% 
+      dplyr::select(any_of(c("SMILES", "method", "test_dataset"))) %>% 
+      distinct()
+    targets_df <- targets_df %>% left_join(p_df, by = "SMILES")
+    break
   }
 }
 
@@ -125,50 +123,61 @@ df_clean <- targets_df %>%
   dplyr::rename(hgnc_symbol = Predicted_Targets) %>%
   dplyr::mutate(hgnc_symbol = trimws(hgnc_symbol)) %>%
   dplyr::filter(hgnc_symbol %in% igraph::V(full_human_ppi)$name) %>%
-  dplyr::distinct(SMILES, method_dataset, test_dataset, hgnc_symbol)
+  dplyr::distinct(SMILES, method, test_dataset, method_dataset, hgnc_symbol)
 
 if (nrow(df_clean) == 0) {
-  message("Warning: No valid HGNC targets found. Writing empty reversal table.")
+  message("Warning: No valid HGNC targets found in PPI network. Writing empty reversal table.")
   dir.create(dirname(opt$output_csv), showWarnings = FALSE, recursive = TRUE)
   empty_df <- data.frame(method_dataset=character(), SMILES=character(), reversal_score=numeric(), reversal_score_scaled=numeric(), confidence=character(), significant=logical())
   fwrite(empty_df, opt$output_csv)
   quit(save = "no", status = 0)
 }
 
-unique_groups <- unique(df_clean$method_dataset)
-message(paste("Processing DTSEA for", length(unique_groups), "unique method_dataset groups..."))
+unique_datasets <- unique(df_clean$test_dataset)
+num_cores <- min(length(unique_datasets), as.numeric(opt$workers))
+message(paste("Processing DTSEA in parallel across", length(unique_datasets), "unique disease datasets using", num_cores, "cores..."))
 
-dtsea_function <- function(drugs_long, m_ds, up, down) {
-  drugs <- drugs_long %>%
-    dplyr::filter(method_dataset == m_ds) %>%
-    dplyr::select(SMILES, hgnc_symbol)
-  colnames(drugs) <- c("drug_id", "gene_target")
-  drugs <- drugs %>% dplyr::filter(gene_target %in% igraph::V(full_human_ppi)$name)
+process_single_dataset <- function(ds) {
+  if (is.na(ds) || is.null(ds) || ds == "") return(NULL)
   
-  if (nrow(drugs) == 0) return(data.frame())
+  sig <- tryCatch({
+    get_disease_signature(ds, opt$test_datasets_dir, id2sym)
+  }, error = function(e) {
+    NULL
+  })
   
-  up_valid <- intersect(up, igraph::V(full_human_ppi)$name)
-  down_valid <- intersect(down, igraph::V(full_human_ppi)$name)
+  if (is.null(sig)) return(NULL)
+  
+  ds_drugs <- df_clean %>%
+    filter(test_dataset == ds) %>%
+    select(SMILES, hgnc_symbol) %>%
+    distinct()
+  colnames(ds_drugs) <- c("drug_id", "gene_target")
+  
+  if (nrow(ds_drugs) == 0) return(NULL)
+  
+  up_valid <- intersect(sig$up, igraph::V(full_human_ppi)$name)
+  down_valid <- intersect(sig$down, igraph::V(full_human_ppi)$name)
   
   up_result <- if (length(up_valid) > 0) {
     tryCatch({
-      DTSEA(network = full_human_ppi, disease = up_valid, drugs = drugs, verbose = FALSE)
+      DTSEA(network = full_human_ppi, disease = up_valid, drugs = ds_drugs, nPermSimple = 1000, verbose = FALSE)
     }, error = function(e) data.frame(drug_id = character(), NES = numeric(), padj = numeric()))
   } else data.frame(drug_id = character(), NES = numeric(), padj = numeric())
   
   down_result <- if (length(down_valid) > 0) {
     tryCatch({
-      DTSEA(network = full_human_ppi, disease = down_valid, drugs = drugs, verbose = FALSE)
+      DTSEA(network = full_human_ppi, disease = down_valid, drugs = ds_drugs, nPermSimple = 1000, verbose = FALSE)
     }, error = function(e) data.frame(drug_id = character(), NES = numeric(), padj = numeric()))
   } else data.frame(drug_id = character(), NES = numeric(), padj = numeric())
   
-  all_drugs <- unique(drugs$drug_id)
-  res_df <- data.frame(smiles_id = all_drugs, stringsAsFactors = FALSE)
+  all_d_ids <- unique(ds_drugs$drug_id)
+  res_df <- data.frame(SMILES = all_d_ids, stringsAsFactors = FALSE)
   
   if (nrow(up_result) > 0 && "NES" %in% colnames(up_result)) {
     up_sub <- as.data.frame(up_result)[, c("drug_id", "NES", "padj")]
-    colnames(up_sub) <- c("smiles_id", "nes_up", "up_padj")
-    res_df <- merge(res_df, up_sub, by = "smiles_id", all.x = TRUE)
+    colnames(up_sub) <- c("SMILES", "nes_up", "up_padj")
+    res_df <- merge(res_df, up_sub, by = "SMILES", all.x = TRUE)
   } else {
     res_df$nes_up <- 0
     res_df$up_padj <- 1.0
@@ -176,8 +185,8 @@ dtsea_function <- function(drugs_long, m_ds, up, down) {
   
   if (nrow(down_result) > 0 && "NES" %in% colnames(down_result)) {
     down_sub <- as.data.frame(down_result)[, c("drug_id", "NES", "padj")]
-    colnames(down_sub) <- c("smiles_id", "nes_down", "down_padj")
-    res_df <- merge(res_df, down_sub, by = "smiles_id", all.x = TRUE)
+    colnames(down_sub) <- c("SMILES", "nes_down", "down_padj")
+    res_df <- merge(res_df, down_sub, by = "SMILES", all.x = TRUE)
   } else {
     res_df$nes_down <- 0
     res_df$down_padj <- 1.0
@@ -188,79 +197,53 @@ dtsea_function <- function(drugs_long, m_ds, up, down) {
   res_df$up_padj[is.na(res_df$up_padj)] <- 1.0
   res_df$down_padj[is.na(res_df$down_padj)] <- 1.0
   res_df$reversal_score <- res_df$nes_down - res_df$nes_up
+  res_df$test_dataset <- ds
   
-  return(res_df[, c("smiles_id", "reversal_score", "nes_up", "nes_down", "up_padj", "down_padj")])
+  return(res_df)
 }
 
-all_results <- list()
-for (m_ds in unique_groups) {
-  sub_df <- df_clean %>% filter(method_dataset == m_ds)
-  ds_name <- unique(sub_df$test_dataset)[1]
-  if (is.na(ds_name) || is.null(ds_name) || ds_name == "") {
-    parts <- strsplit(m_ds, "_")[[1]]
-    ds_name <- paste(parts[-1], collapse = "_")
-    if (ds_name == "") ds_name <- m_ds
-  }
-  
-  sig <- tryCatch({
-    get_disease_signature(ds_name, opt$test_datasets_dir, id2sym)
-  }, error = function(e) {
-    message("Signature error for ", ds_name, ": ", e$message)
-    NULL
-  })
-  
-  if (!is.null(sig)) {
-    res <- dtsea_function(df_clean, m_ds, sig$up, sig$down)
-    if (nrow(res) > 0) {
-      all_results[[m_ds]] <- res
-    }
-  }
-}
+all_dataset_results <- mclapply(unique_datasets, process_single_dataset, mc.cores = num_cores)
+all_dataset_results <- all_dataset_results[!sapply(all_dataset_results, is.null)]
 
-if (length(all_results) > 0) {
-  reversal_df <- bind_rows(all_results, .id = "method_dataset")
+if (length(all_dataset_results) > 0) {
+  reversal_merged <- bind_rows(all_dataset_results)
+  mapping_df <- df_clean %>% select(SMILES, method, test_dataset, method_dataset) %>% distinct()
+  final_df <- mapping_df %>% inner_join(reversal_merged, by = c("SMILES", "test_dataset"))
 } else {
-  reversal_df <- data.frame(method_dataset = character(), smiles_id = character(), reversal_score = numeric(), nes_up = numeric(), nes_down = numeric(), up_padj = numeric(), down_padj = numeric())
+  final_df <- data.frame(method_dataset = character(), method = character(), test_dataset = character(), SMILES = character(), reversal_score = numeric(), nes_up = numeric(), nes_down = numeric(), up_padj = numeric(), down_padj = numeric())
 }
 
 if (file.exists(opt$potency_csv)) {
   potency <- read_csv(opt$potency_csv, show_col_types = FALSE)
   if ("query_smiles" %in% colnames(potency)) {
-    potency <- potency %>% dplyr::rename(smiles_id = query_smiles)
-  } else if ("SMILES" %in% colnames(potency)) {
-    potency <- potency %>% dplyr::rename(smiles_id = SMILES)
+    potency <- potency %>% dplyr::rename(SMILES = query_smiles)
   }
   
-  final_reversal_df <- reversal_df %>% left_join(potency, by = "smiles_id")
+  final_df <- final_df %>% left_join(potency, by = "SMILES")
   
-  action_col <- if ("action" %in% colnames(final_reversal_df)) final_reversal_df$action else rep("Unknown", nrow(final_reversal_df))
-  ic50_col <- if ("IC50" %in% colnames(final_reversal_df)) as.numeric(final_reversal_df$IC50) else rep(NA, nrow(final_reversal_df))
+  action_col <- if ("action" %in% colnames(final_df)) final_df$action else rep("Unknown", nrow(final_df))
+  ic50_col <- if ("IC50" %in% colnames(final_df)) as.numeric(final_df$IC50) else rep(NA, nrow(final_df))
   
-  final_reversal_df$reversal_score_scaled <- case_when(
-    action_col %in% c("INHIBITOR", "ANTAGONIST") ~ final_reversal_df$reversal_score,
-    action_col %in% c("AGONIST") ~ -final_reversal_df$reversal_score,
-    !is.na(ic50_col) & ic50_col < 10000 ~ final_reversal_df$reversal_score,
-    TRUE ~ final_reversal_df$reversal_score
+  final_df$reversal_score_scaled <- case_when(
+    action_col %in% c("INHIBITOR", "ANTAGONIST") ~ final_df$reversal_score,
+    action_col %in% c("AGONIST") ~ -final_df$reversal_score,
+    !is.na(ic50_col) & ic50_col < 10000 ~ final_df$reversal_score,
+    TRUE ~ final_df$reversal_score
   )
-  final_reversal_df$confidence <- case_when(
+  final_df$confidence <- case_when(
     action_col %in% c("INHIBITOR", "AGONIST", "ANTAGONIST") ~ "high",
     !is.na(ic50_col) & ic50_col < 10000 ~ "high",
     TRUE ~ "low"
   )
-  final_reversal_df$significant <- ifelse(
-    final_reversal_df$up_padj <= 0.05 | final_reversal_df$down_padj <= 0.05, TRUE, FALSE
+  final_df$significant <- ifelse(
+    final_df$up_padj <= 0.05 | final_df$down_padj <= 0.05, TRUE, FALSE
   )
 } else {
-  final_reversal_df <- reversal_df
-  final_reversal_df$reversal_score_scaled <- final_reversal_df$reversal_score
-  final_reversal_df$confidence <- "low"
-  final_reversal_df$significant <- FALSE
-}
-
-if ("smiles_id" %in% colnames(final_reversal_df)) {
-  final_reversal_df <- final_reversal_df %>% dplyr::rename(SMILES = smiles_id)
+  final_df$reversal_score_scaled <- final_df$reversal_score
+  final_df$confidence <- "low"
+  final_df$significant <- FALSE
 }
 
 dir.create(dirname(opt$output_csv), showWarnings = FALSE, recursive = TRUE)
-fwrite(final_reversal_df, opt$output_csv)
-message("Successfully wrote ", nrow(final_reversal_df), " disease reversal results to: ", opt$output_csv)
+fwrite(final_df, opt$output_csv)
+message("\n>>> Successfully wrote ", nrow(final_df), " disease reversal results to: ", opt$output_csv)

@@ -16,6 +16,7 @@ The `TheraFlow/pipeline/` package is an end-to-end, modular benchmarking, filter
    - [Step 5: DTSEA Disease DEG Reversal Scoring](#step-5-dtsea-disease-deg-reversal-scoring-5disease_reversalpy--disease_reversalr)
    - [Step 6: Master Merging, Multi-Objective Pareto Optimization & RRA Consensus Ranking](#step-6-master-merging-multi-objective-pareto-optimization--rra-consensus-ranking-6mergingpy--consensus_rankingr)
    - [Step 7: AlphaFold 3 Docking, Pocket Interface Extraction & QM/MM Setup](#step-7-alphafold-3-docking-pocket-interface-extraction--qmmm-setup-7docking_md_setuppy--take_interfacepy)
+   - [Step 8: Multi-Tier Benchmarking & Figure Generation](#step-8-multi-tier-benchmarking--figure-generation-benchmarkr)
 5. [Outputs & Data Dictionary](#-outputs--data-dictionary)
 
 ---
@@ -194,6 +195,32 @@ python TheraFlow/pipeline/7.docking_md_setup.py   --setup_qm   --cif_dir TheraFl
 Parses AF3 prediction summaries and QM calculation logs into a consolidated metrics table:
 ```bash
 python TheraFlow/pipeline/7.docking_md_setup.py   --extract_metrics   --af3_output TheraFlow/outputs/af3_predictions   --output_metrics TheraFlow/outputs/docking_qm_metrics.csv
+```
+
+---
+
+### Step 8: Multi-Tier Benchmarking & Figure Generation (`benchmark.R`)
+Generates publication-quality benchmark visualizations across generative performance, 2D medicinal chemistry filters, 3D PoseBusters structural integrity, DTSEA disease reversal potency, PPI network proximity, architecture complexity, and MD/QM electronic stability.
+
+- **Visualizations Generated**:
+  - **Funky Heatmap Benchmark (`funky_map.pdf`)**: Method rankings integrating generative quality, drug-likeness, structural realism, and disease reversal.
+  - **Disease DEG Reversal Distributions (`disease_reversal_distribution.pdf`)**: Violin and boxplot comparisons of transcriptomic reversal across test datasets.
+  - **PPI Target-Disease Shortest Path Proximity (`disease_reversal_vs_network_distance.pdf`, `network_distance_box.pdf`)**: Mechanistic correlation between reversal scores, network distance to disease gene modules, and target hubness.
+  - **Multi-Baseline Attrition & Funnel Analyses (`Attrition_across_chem.pdf`, `Attrition_across_struct.pdf`, `druglike_vs_structural_by_stage.pdf`, `streuctural_like_molecules.pdf`)**: Evaluates multi-tier retention across syntax validity, Lipinski Ro5/safety, and PoseBusters 3D geometric constraints.
+  - **5-Axis Multi-Objective Radar Charts (`radar_plot.pdf`)**: Compares whole generated spaces vs Pareto-optimal consensus selections.
+  - **Model Architecture Complexity vs Performance (`heatmap_arch.pdf`)**: Multi-annotation ComplexHeatmap assessing encoders, decoders, alignment strategies, layer depth, and loss types against downstream performance.
+  - **Molecular Dynamics & Quantum Mechanics Stability (`md_metrics_supplemenbt.pdf`, `md_metrics_pass.pdf`, `homolumovsrmsd_supplement.pdf`)**: Evaluates ligand-pocket RMSD, backbone RMSD, and GFN2-xTB HOMO-LUMO electronic gaps against optimum target ranges.
+
+```bash
+Rscript TheraFlow/pipeline/benchmark.R \
+  --master_csv TheraFlow/outputs/merged_master_dataframe.csv \
+  --set_properties_csv TheraFlow/outputs/set_properties.csv \
+  --consensus_top_csv TheraFlow/outputs/consensus_top.csv \
+  --potency_scores_csv TheraFlow/outputs/potency_scores.csv \
+  --reversal_res_csv TheraFlow/outputs/reversal_res.csv \
+  --docking_qm_metrics_csv TheraFlow/outputs/docking_qm_metrics.csv \
+  --architecture_csv TheraFlow/method_processing/data/architecture_complexity.csv \
+  --figures_dir TheraFlow/outputs/figures
 ```
 
 ---

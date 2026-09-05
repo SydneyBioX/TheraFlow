@@ -97,57 +97,85 @@ def run_af3_batch_pipeline(
     work_dir = out_path / "_af3_workdir"
     precompute_in = work_dir / "precompute_input_batch"
     precompute_out = work_dir / "output_precompute"
+    os.makedirs(work_dir, exist_ok=True)
     
-    for d in [precompute_in, precompute_out]:
-        if d.exists():
-            shutil.rmtree(d)
-        os.makedirs(d, exist_ok=True)
-        
-    for job in representative_jobs:
-        with open(precompute_in / f"{job['name']}.json", "w") as f:
-            json.dump(job, f, indent=2)
-            
-    # Phase 1: Run data pipeline (MSA database search) on unique proteins
+    # Phase 1 & 2: Check for existing cached MSAs first across output_precompute directories
+    msa_cache = {}
+    search_dirs = [
+        af3_path / "output_precompute",
+        work_dir / "output_precompute",
+        Path("alphafold3/output_precompute").resolve()
+    ]
+    for s_dir in search_dirs:
+        if s_dir.exists():
+            for dj in s_dir.glob("*/*_data.json"):
+                try:
+                    with open(dj, "r") as f:
+                        data = json.load(f)
+                    for seq in data.get("sequences", []):
+                        if "protein" in seq and seq["protein"].get("sequence"):
+                            prot_seq = seq["protein"]["sequence"]
+                            if prot_seq not in msa_cache and seq["protein"].get("unpairedMsa"):
+                                msa_cache[prot_seq] = {
+                                    "unpairedMsa": seq["protein"].get("unpairedMsa"),
+                                    "pairedMsa": seq["protein"].get("pairedMsa"),
+                                    "templates": seq["protein"].get("templates", [])
+                                }
+                except Exception:
+                    pass
+                    
+    missing_jobs = [j for j in representative_jobs if not any(s.get("protein", {}).get("sequence") in msa_cache for s in j.get("sequences", []))]
+    
     af3_env_bin = str(Path(af3_python).parent)
     env = os.environ.copy()
     env["PATH"] = f"{af3_env_bin}:{env.get('PATH', '')}"
-    
-    precompute_cmd = [
-        af3_python,
-        str(af3_path / "run_alphafold.py"),
-        f"--input_dir={precompute_in}",
-        "--run_inference=False",
-        f"--model_dir={af3_path / model_dir}",
-        f"--db_dir={af3_path / db_dir}",
-        f"--output_dir={precompute_out}",
-        "--force_output_dir=True"
-    ]
-    
-    print(f"\n--- Phase 1: Running MSA precomputation on {len(representative_jobs)} targets ---")
-    t0 = time.time()
-    subprocess.run(precompute_cmd, check=True, env=env, cwd=str(af3_path))
-    print(f"MSA Precomputation completed in {time.time() - t0:.2f} seconds.")
-    
-    # Phase 2: Cache MSAs and templates
-    msa_cache = {}
-    for job in representative_jobs:
-        job_name = job["name"]
-        data_json = precompute_out / job_name / f"{job_name}_data.json"
-        if not data_json.exists():
-            raise FileNotFoundError(f"Expected data.json not found at {data_json}")
-        with open(data_json, "r") as f:
-            data = json.load(f)
-        for seq in data.get("sequences", []):
-            if "protein" in seq:
-                prot_seq = seq["protein"]["sequence"]
-                msa_cache[prot_seq] = {
-                    "unpairedMsa": seq["protein"].get("unpairedMsa"),
-                    "pairedMsa": seq["protein"].get("pairedMsa"),
-                    "templates": seq["protein"].get("templates", [])
-                }
-                break
+
+    if missing_jobs:
+        print(f"\n--- Phase 1: Running MSA precomputation on {len(missing_jobs)} missing targets ---")
+        for d in [precompute_in, precompute_out]:
+            if d.exists():
+                shutil.rmtree(d)
+            os.makedirs(d, exist_ok=True)
+            
+        for job in missing_jobs:
+            with open(precompute_in / f"{job['name']}.json", "w") as f:
+                json.dump(job, f, indent=2)
                 
+        precompute_cmd = [
+            af3_python,
+            str(af3_path / "run_alphafold.py"),
+            f"--input_dir={precompute_in}",
+            "--run_inference=False",
+            f"--model_dir={af3_path / model_dir}",
+            f"--db_dir={af3_path / db_dir}",
+            f"--output_dir={precompute_out}",
+            "--force_output_dir=True"
+        ]
+        
+        t0 = time.time()
+        subprocess.run(precompute_cmd, check=True, env=env, cwd=str(af3_path))
+        print(f"MSA Precomputation completed in {time.time() - t0:.2f} seconds.")
+        
+        for job in missing_jobs:
+            job_name = job["name"]
+            data_json = precompute_out / job_name / f"{job_name}_data.json"
+            if data_json.exists():
+                with open(data_json, "r") as f:
+                    data = json.load(f)
+                for seq in data.get("sequences", []):
+                    if "protein" in seq:
+                        prot_seq = seq["protein"]["sequence"]
+                        msa_cache[prot_seq] = {
+                            "unpairedMsa": seq["protein"].get("unpairedMsa"),
+                            "pairedMsa": seq["protein"].get("pairedMsa"),
+                            "templates": seq["protein"].get("templates", [])
+                        }
+                        break
+    else:
+        print(f"Found precomputed MSAs in cache for all {len(representative_jobs)} target sequences! Skipping database search.")
+        
     print(f"Successfully cached MSAs for {len(msa_cache)} unique sequences.")
+
     
     # Phase 3: Populate all candidate jobs with cached MSAs
     populated_jobs = []
@@ -579,7 +607,7 @@ def extract_docking_and_qm_metrics(
         dataset = "Unknown"
         model_idx = None
         
-        for d in ["glaucoma_bulk", "glaucoma", "cardiomyopathy", "parkinsons", "hcc"]:
+        for d in ["glaucoma_bulk", "glaucoma", "cardiomyopathy", "parkinsons", "hcc", "lincs1000_1", "lincs1000_2"]:
             if d in job_name:
                 dataset = d
                 break

@@ -11,6 +11,7 @@ disease reversal, consensus ranking, and docking/QM stages:
   Step 5: DTSEA Disease DEG Reversal Enrichment Analysis in R
   Step 6: Master Merging, 11D Pareto Multi-Objective Optimization & Robust Rank Aggregation
   Step 7: AlphaFold 3 Docking / QM Metric Extraction (Optional / If predictions exist)
+  Step 8: Multi-Tier Benchmarking & Figure Generation (FunkyHeatmap, Pareto Radar, PoseBusters Attrition)
   Final : Merges all calculated metrics directly back into processed_data.csv
 
 Usage:
@@ -96,8 +97,8 @@ def main():
     parser.add_argument(
         "--steps",
         type=str,
-        default="1,2,3,4,5,6",
-        help="Comma-separated list of pipeline steps to run (e.g. 1,2,3,4,5,6 or 1,2,3,4,5,6,7)."
+        default="1,2,3,4,5,6,8",
+        help="Comma-separated list of pipeline steps to run (e.g. 1,2,3,4,5,6,8 or 1,2,3,4,5,6,7,8)."
     )
     
     # Execution options for sub-scripts
@@ -243,6 +244,24 @@ def main():
             ])
         run_command_stream(cmd_7, "Step 7: Docking & QM Metrics")
         
+
+    # -------------------------------------------------------------------------
+    # STAGE 8: Multi-Tier Benchmarking & Figure Generation (benchmark.R)
+    # -------------------------------------------------------------------------
+    if 8 in active_steps:
+        log_header("Stage 8: Multi-Tier Benchmarking & Comprehensive Visualizations")
+        cmd_8 = [
+            "Rscript", str(pipeline_dir / "benchmark.R"),
+            "--master_csv", str(master_merged_csv),
+            "--set_properties_csv", str(set_properties_csv),
+            "--consensus_top_csv", str(consensus_csv),
+            "--potency_scores_csv", str(potency_scores_csv),
+            "--reversal_res_csv", str(reversal_csv),
+            "--docking_qm_metrics_csv", str(docking_qm_csv),
+            "--figures_dir", str(out_dir / "figures")
+        ]
+        run_command_stream(cmd_8, "Step 8: Benchmark Visualizations")
+
     # -------------------------------------------------------------------------
     # FINAL: Merge All Calculated Results Back into processed_data.csv
     # -------------------------------------------------------------------------

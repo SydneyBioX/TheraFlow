@@ -77,7 +77,7 @@ def run_disease_reversal_pipeline(
     
     cmd_str = " ".join(cmd)
     print(f"Launching DTSEA disease reversal R script:\n  {cmd_str}")
-    result = subprocess.run(cmd, capture_output=True, text=True)
+    result = subprocess.run(cmd, check=True)
     
     if result.returncode != 0:
         print("DTSEA execution failed!")
