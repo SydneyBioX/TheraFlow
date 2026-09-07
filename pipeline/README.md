@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="../Figures/theraflow_hex.png" width="140" alt="TheraFlow Logo">
+</p>
+
 # TheraFlow Downstream Evaluation & Prioritization Pipeline
 
 The `TheraFlow/pipeline/` package is an end-to-end, modular benchmarking, filtering, target profiling, disease reversal scoring, multi-objective consensus ranking, and structural simulation framework for generative drug discovery models evaluated on transcriptomic signatures.
@@ -23,7 +27,12 @@ The `TheraFlow/pipeline/` package is an end-to-end, modular benchmarking, filter
 
 ## 🏗️ Pipeline Architecture
 
-#### Figure insert here
+<p align="center">
+  <img src="../Figures/Figure2a.png" width="95%" alt="TheraFlow Pipeline Architecture">
+</p>
+<p align="center">
+  <em><strong>Figure 2a: End-to-End Multi-Tier Evaluation, Prioritization, and Structural Validation Workflow in TheraFlow.</strong> (<a href="../Figures/Figure2a.pdf">Download High-Resolution Vector PDF</a>)</em>
+</p>
 
 ---
 

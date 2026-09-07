@@ -1,0 +1,2177 @@
+---
+title: "Theraflow: A Multi-Stage Framework for evaluating generative drug models from transcriptomics and prioritizing candidates"
+author: "Rojashree Jayakumar; Wenze Ding; Shila Ghazanfar; Heejung Shim; Jean Yang"
+date: "`r format(Sys.time(), '%B %d, %Y')`"
+format: 
+  html:
+    toc: true
+    toc-depth: 3
+    toc-expand: true
+    toc-floating: true
+    number-sections: true
+    theme: united
+    highlight: tango
+    code-fold: true
+    embed-resources: true
+editor_options: 
+  chunk_output_type: console
+execute:
+  dir: file
+  echo: false
+  warning: false
+  message: false
+  cache: true
+---
+
+```{r}
+library(dplyr)
+library(ggplot2)
+library(data.table)
+library(igraph)
+library(purrr)
+library(tidyverse)
+library(tidyr)
+library(readr)
+library(limma)
+library(tibble)
+library(patchwork)
+library(rPref)
+library(ggradar)
+library(ggpubr)
+library(scales)
+library(funkyheatmap)
+library(reticulate)
+# Create figures directory if it doesn't exist
+```
+
+## Current benchmarks lack consistent criteria for assessing whether generated molecules have therapeutic potential
+
+::: panel-tabset
+### Metrics
+
+```{python}
+#| fig-height: 12
+#| fig-width: 10
+#| label: fig-lit-review-metrics
+#| results: 'hide'
+
+import os
+import pandas as pd
+import seaborn as sns
+import matplotlib.pyplot as plt
+import matplotlib.patches as mpatches
+
+# Paths for data and figures
+metrics_path = 'Theraflow/method_processing/metrics.csv' if os.path.exists('data/metrics.csv') else '../data/metrics.csv'
+eval_path = 'Theraflow/method_processing/evaluation.csv' if os.path.exists('data/evaluation.csv') else '../data/evaluation.csv'
+
+model_cols = [
+    'Gex2SGen',
+    'FAME',
+    'SmilesGEN',
+    'GexMolGen',
+    'TransGEM',
+    'TRIOMPHE',
+    'GxRNN',
+    'BiAee',
+    'BICEV',
+    'Paccmann_RL'
+]
+
+# 1. Load metrics data
+df_metrics = pd.read_csv(metrics_path)
+
+# Prepare numerical data for the matrix
+heatmap_data = df_metrics[model_cols].replace({r'Yes\s*': 1, r'No\s*': 0}, regex=True).fillna(0).astype(float)
+heatmap_data.index = df_metrics['Metrics']
+
+# Map 'Class' to colors for the side bars
+class_palette = dict(zip(df_metrics['Class'].unique(), sns.color_palette("Set2")))
+
+row_colors = pd.DataFrame({
+    'Class': df_metrics['Class'].map(class_palette).values,
+}, index=df_metrics['Metrics'])
+
+# Create the Clustermap for Evaluated Metrics
+g_metrics = sns.clustermap(
+    heatmap_data,
+    row_colors=row_colors,           
+    cmap="Greens",                    
+    linewidths=0.5, 
+    cbar_pos=None,  
+    linecolor='lightgray',                 
+    figsize=(12, 17),
+    row_cluster=False,
+    col_cluster=False
+)
+
+_ = g_metrics.ax_row_colors.set_xticks([])
+_ = g_metrics.ax_row_colors.set_xticklabels([])
+_ = plt.setp(g_metrics.ax_heatmap.get_xticklabels(), rotation=90, horizontalalignment='center', fontsize=14)
+_ = plt.setp(g_metrics.ax_heatmap.get_yticklabels(), fontsize=14)
+_ = g_metrics.ax_heatmap.set_ylabel('')
+
+# Add Legends
+class_handles = [mpatches.Patch(color=color, label=label) for label, color in class_palette.items()]
+yes_handle = mpatches.Patch(color=sns.color_palette("Greens")[-1], label='Yes')
+no_handle = mpatches.Patch(color=sns.color_palette("Greens")[0], label='No')
+
+class_legend = g_metrics.fig.legend(handles=class_handles, loc="upper center", frameon=False, fontsize=14)
+_ = g_metrics.fig.add_artist(class_legend)
+
+yes_no_legend = g_metrics.fig.legend(
+    handles=[yes_handle, no_handle],
+    title="Evaluated Metrics",
+    loc="upper left",
+    frameon=False,
+    fontsize=14,
+    title_fontsize=14,
+    bbox_to_anchor=(0.88, 0.50)
+)
+_ = plt.show()
+```
+
+### Evaluation strategies
+
+```{python}
+#| fig-height: 12
+#| fig-width: 10
+#| label: fig-lit-review-eval
+#| results: 'hide'
+
+# 2. Load evaluation strategies data
+df_eval = pd.read_csv(eval_path)
+
+heatmap_data_eval = df_eval[model_cols].replace({r'Yes\s*': 1, r'No\s*': 0}, regex=True).fillna(0).astype(float)
+heatmap_data_eval.index = df_eval['Evaluation method']
+
+class_palette_eval = dict(zip(df_eval['Class'].unique(), sns.color_palette("Set2")))
+
+row_colors_eval = pd.DataFrame({
+    'Class': df_eval['Class'].map(class_palette_eval).values,
+}, index=df_eval['Evaluation method'])
+
+# Create the Clustermap for Evaluation Strategies
+g_eval = sns.clustermap(
+    heatmap_data_eval,
+    row_colors=row_colors_eval,           
+    cmap="Oranges",                    
+    linewidths=0.5, 
+    linecolor='gray',
+    cbar_pos=None,                   
+    figsize=(12, 17),
+    row_cluster=False,
+    col_cluster=False
+)
+
+_ = g_eval.ax_row_colors.set_xticks([])
+_ = g_eval.ax_row_colors.set_xticklabels([])
+_ = plt.setp(g_eval.ax_heatmap.get_xticklabels(), rotation=90, horizontalalignment='center', fontsize=14)
+_ = plt.setp(g_eval.ax_heatmap.get_yticklabels(), fontsize=14)
+_ = g_eval.ax_heatmap.set_ylabel('')
+
+class_handles_eval = [mpatches.Patch(color=color, label=label) for label, color in class_palette_eval.items()]
+yes_handle_eval = mpatches.Patch(color=sns.color_palette("Oranges")[-1], label='Yes')
+no_handle_eval = mpatches.Patch(color=sns.color_palette("Oranges")[0], label='No')
+
+class_legend_eval = g_eval.fig.legend(handles=class_handles_eval, loc="upper center", frameon=False, fontsize=14)
+_ = g_eval.fig.add_artist(class_legend_eval)
+
+yes_no_legend_eval = g_eval.fig.legend(
+    handles=[yes_handle_eval, no_handle_eval],
+    title="Evaluated strategy",
+    loc="upper right",
+    frameon=False,
+    fontsize=14,
+    title_fontsize=14
+)
+
+_ = plt.show()
+```
+:::
+
+## TheraFlow provides a staged evaluation framework for transcriptomics-guided molecular generation
+
+TheraFlow integrates more than 70 complementary evaluation metrics spanning model-level generative performance and molecule-level chemical, structural and biological properties. @fig-1 is a comparitve heatmap showing selected metrics
+
+```{r}
+#| fig-height: 10
+#| fig-width: 15
+#| label: fig-1
+
+df = fread("Theraflow/outputs/merged_master_dataframe.csv")
+
+columns = c("SMILES", "method", "QED", "SA_Score", "MW", "LogP", "HBA", "HBD", "Passes_Safety", "Sim_Morg_Tani", "internal_energy", "internal_steric_clash", "aromatic_ring_flatness", "non-aromatic_ring_non-flatness", "number_short_outlier_bonds", "number_long_outlier_bonds", "most_extreme_relative_angle", "reversal_score_scaled")
+df = df %>%
+  group_by(method) %>%
+  dplyr::select(all_of(columns))%>%
+  summarise(across(everything(), ~ {
+    # If the column is logical, convert to numeric before taking the mean
+    if(is.logical(.x)) {
+      mean(as.numeric(.x), na.rm = TRUE)
+    } else if(is.numeric(.x)) {
+      mean(.x, na.rm = TRUE)
+    }
+  })) %>%
+  ungroup()
+
+gen_metrics = fread("Theraflow/outputs/set_properties.csv") # note the change 
+gen_metrics <- gen_metrics %>%
+  mutate(method = case_when(
+    method == "biaee"       ~ "BiAAE",
+    method == "bicev"       ~ "BiCEV",
+    method == "fame"        ~ "FAME",
+    method == "gex2sgen"    ~ "Gex2SGen",
+    method == "gexmolgen"   ~ "GexMolGen",
+    method == "gxrnn"       ~ "GxRNN",
+    method == "paccmann_rl" ~ "Paccmann RL",
+    method == "smilesgen"   ~ "SmilesGEN",
+    method == "transgem"    ~ "TransGEM",
+    method == "triomphe"    ~ "TRIOMPHE",
+    TRUE                    ~ method # Keeps any unexpected values as-is
+  ))
+gen_metrics <- gen_metrics %>%  
+  group_by(method) %>%
+  summarise(across(where(is.numeric), ~mean(.x, na.rm = TRUE))) %>%
+  ungroup()
+data = df%>%inner_join(gen_metrics, by = "method")
+data <- data %>% rownames_to_column("id")
+colnames(data) <- c(
+  "id", "method", "QED", "SA score", "MW", "LogP", "HBA", "HBD", 
+  "Safety", "Tanimoto Similarity", "Internal Energy", "Internal Steric Clash",  
+  "Aromatic Ring Flatness", "Non Aromatic Ring Flatness", "Short Bond Outliers", 
+  "Long Bond Outliers", "Extreme Angle", "DRS", "Validity", "Uniqueness", 
+  "Novelty", "Diversity"
+)
+
+data$DRS <- (data$DRS + 1)/2
+#  Define Column Information
+library(tibble)
+
+column_info <- tribble(
+  ~id,                          ~group,        ~name,                       ~geom,       ~palette,              ~options,
+  "method",                     "General",     "",                          "text",      "Method",              list(width = 2),
+  "Validity",                   "Generative",  "Validity",                  "funkyrect", "Generative metrics",  lst(),
+  "Uniqueness",                 "Generative",  "Uniqueness",                "funkyrect", "Generative metrics",  lst(),
+  "Novelty",                    "Generative",  "Novelty",                   "funkyrect", "Generative metrics",  list(width = 1, scale = FALSE),
+  "Diversity",                  "Generative",  "Diversity",                 "funkyrect", "Generative metrics",  lst(),
+  "Safety",                     "Chemical",    "Safety",                    "bar",       "Drug-like metrics",   list(width = 1, draw_outline = FALSE, scale = FALSE),
+  "QED",                        "Chemical",    "QED",                       "bar",       "Drug-like metrics",   list(width = 1, draw_outline = FALSE, scale = FALSE),
+  "SA score",                   "Chemical",    "SA score",                  "bar",       "Drug-like metrics",   list(width = 1, draw_outline = FALSE),
+  "MW",                         "Chemical",    "MW",                        "bar", "Drug-like metrics",   list(width = 1, draw_outline = FALSE),
+  "LogP",                       "Chemical",    "LogP",                      "bar", "Drug-like metrics",   list(width = 1, draw_outline = FALSE),
+  "HBA",                        "Chemical",    "HBA",                       "bar", "Drug-like metrics",   list(width = 1, draw_outline = FALSE),
+  "HBD",                        "Chemical",    "HBD",                       "bar", "Drug-like metrics",   list(width = 1, draw_outline = FALSE),
+  
+  "Tanimoto Similarity",        "Structural",  "Tanimoto Similarity",       "funkyrect",       "Structural metrics", list(width = 1, legend = FALSE, draw_outline = FALSE, scale = FALSE),
+  
+  "Internal Energy",            "Structural",  "Internal Energy",           "funkyrect",    "Structural metrics",  list(width = 1, scale = FALSE),
+  "Internal Steric Clash",      "Structural",  "Internal Steric Clash",     "funkyrect",    "Structural metrics",  list(width = 1, scale = FALSE),
+  
+  "Aromatic Ring Flatness",     "Structural",  "Aromatic Ring Flatness",    "funkyrect",    "Structural metrics",  list(legend = FALSE, draw_outline = FALSE, scale = FALSE),
+  "Non Aromatic Ring Flatness", "Structural",  "Non Aromatic Ring Flatness","funkyrect",    "Structural metrics",  list(legend = FALSE, draw_outline = FALSE, scale = FALSE),
+  "Short Bond Outliers",        "Structural",  "Short Bond Outliers",       "funkyrect",    "Structural metrics",  list(width = 1, scale = FALSE),
+  "Long Bond Outliers",         "Structural",  "Long Bond Outliers",        "funkyrect",    "Structural metrics",  list(width = 1, scale = FALSE),
+  "Extreme Angle",              "Structural",  "Extreme Angle",             "funkyrect",    "Structural metrics",  list(width = 1, scale = TRUE),
+  
+  "DRS",                        "Biological",  "DRS",                       "circle",       "Disease Reversal",    list(legend = FALSE, draw_outline = FALSE, scale = FALSE, width = 4)
+)
+
+# 2. Define Column Groups
+column_groups <- tribble(
+  ~group,        ~name,                      ~palette,
+  "General",     "Method",                   "Method",
+  "Generative",  "Generative",   "Generative metrics",
+  "Chemical",    "Drug-like",                "Drug-like metrics",
+  "Structural",  "Structural",    "Structural metrics",
+  "Biological",  "Disease Reversal",         "Disease Reversal",
+)
+
+# Define palettes for your stages
+
+# 5. Define Palettes using exact purple, blue, pink, and neutral shades matching your reference figure
+palettes <- list(
+   Method = "skyblue",
+  `Generative metrics`    = c("#F1F8FE", "#C5D4E6", "#8C9AC2", "#7B3F9B", "#4A0E4E") , # Clean blue gradient
+  `Drug-like metrics`     = c("#FFF0EE", "#FADBD8", "#F46095", "#A7007A", "#3A054F"), # Deep purple gradient (matching reference batch correction blocks)
+  `Structural metrics`    = "Greens", # Rich pink/magenta gradient (matching reference bio conservation blocks)
+  `Disease Reversal`      = "YlOrBr" # Red gradient
+)
+
+legends <- list(
+  list(palette = "Generative metrics", geom = "funkyrect", title = "Generative metrics"),
+  list(palette = "Drug-like metrics", geom = "bar", title = "Drug-like metrics"),
+  list(palette = "Structural metrics", geom = "circle", title = "Structural metrics")
+)
+
+plot <- funky_heatmap(
+    data = data,
+    column_info = column_info,
+    column_groups = column_groups,
+    palettes = palettes,
+    legends = legends,
+    position_args = position_arguments(
+        col_annot_angle = 35,
+        expand_ymin = 3,
+        col_annot_offset = 1
+    )
+)
+
+
+main <- plot[[1]]
+
+# Confirm layer order fresh
+# for (i in seq_along(main$layers)) cat(i, ":", class(main$layers[[i]]$geom)[1], "\n")
+
+# Confirm no duplicate GeomText layers this time
+text_layers <- which(sapply(main$layers, function(l) class(l$geom)[1]) == "GeomText")
+# text_layers
+# length(text_layers) == 1 
+
+T <- text_layers[1]
+
+d <- main$layers[[T]]$data
+# table(d$angle)   # should now show 0 and 90, not 0 and 30
+
+is_header <- d$angle == 35
+row_bg <- main$layers[[which(sapply(main$layers, function(l) class(l$geom)[1]) == "GeomRect")[1]]]$data
+min_y  <- min(row_bg$ymin, na.rm = TRUE)
+
+d$y[is_header]     <- min_y - 1
+d$hjust[is_header] <- 1.1
+d$vjust[is_header] <- 1
+main$layers[[T]]$data <- d
+
+
+d3 <- main$layers[[3]]$data
+
+bars <- d3[!(abs(d3$ymin - 3) < 0.01 & abs(d3$ymax - 4) < 0.01), ]
+
+bar_layer <- ggplot2::geom_rect(
+  data = bars,
+  mapping = ggplot2::aes(xmin = xmin, xmax = xmax, ymin = ymin, ymax = ymax, fill = colour),
+  inherit.aes = FALSE,
+  colour = NA
+)
+group_order <- unique(column_info$group)
+
+hd <- d3[abs(d3$ymin - 1) < 0.01 & abs(d3$ymax - 2) < 0.01, ]
+
+hd <- hd[order(hd$xmin), ]
+hd$group <- group_order
+hd$name  <- column_groups$name[match(hd$group, column_groups$group)]
+
+# hd[, c("xmin", "xmax", "colour", "group", "name")]
+hd <- hd[order(hd$xmin), ]
+hd$group <- group_order
+hd$name  <- column_groups$name[match(hd$group, column_groups$group)]
+
+# hd[, c("xmin", "xmax", "colour", "group", "name")]
+hd$radius <- 0.3
+header_layer <- funkyheatmap::geom_rounded_rect(
+  data = hd,
+  mapping = ggplot2::aes(xmin = xmin, xmax = xmax, ymin = ymin, ymax = ymax, radius = 0.3),
+  fill = hd$colour,
+  inherit.aes = FALSE
+)
+
+main$layers[[3]] <- bar_layer
+main$layers <- append(main$layers, list(header_layer), after = 3)
+
+hd$x_mid <- (hd$xmin + hd$xmax) / 2
+hd$y_mid <- (hd$ymin + hd$ymax) / 2
+
+main <- main + ggplot2::geom_text(
+  data = hd,
+  mapping = ggplot2::aes(x = x_mid, y = y_mid, label = name),
+  inherit.aes = FALSE,
+  colour = "white",
+  fontface = "bold",
+  size = 4
+)
+
+
+d5 <- main$layers[[7]]$data
+
+header_names <- hd$name   # the 6 group names you already confirmed
+
+d5_clean <- d5[!(d5$label_value %in% header_names), ]
+
+# nrow(d5)        # before
+# nrow(d5_clean)  # should be exactly 6 fewer
+
+main$layers[[7]]$data <- d5_clean
+main$layers[[2]] <- NULL
+
+plot[[1]] <- main
+plot
+```
+
+## Stringent staged evaluation reveals substantial attrition in generated molecules
+
+1.  There is substantive attrition across multiple evaluation stages (@fig-2)
+
+2.  Performance at one evaluation stage does not reliably predict performance at the next, revealing complementary failure modes that single-stage benchmarks obscure (@fig-4, @fig-3)
+
+::: panel-tabset
+### Attrition rate across Theraflow stages
+
+```{r}
+#| label: fig-2
+#| fig-width: 10
+
+raw = fread("Theraflow/outputs/merged_master_dataframe.csv")
+data = raw
+external_totals = data %>%
+  group_by(method) %>%
+  summarise(
+    Total    = n())
+
+# 1. Calculate the cumulative percentage of molecules PASSING each tier
+df_passing <- raw %>%
+  mutate(
+    pass_Basic_Chem = sanitization & all_atoms_connected & passes_valence_checks & passes_kekulization,
+    pass_Geometry   = bond_lengths & bond_angles & (number_clashes == 0),
+    pass_Planarity  = aromatic_ring_flatness & double_bond_flatness,
+    pass_PoseBusters_Total = pass_Basic_Chem & pass_Geometry & pass_Planarity
+  ) %>%
+  group_by(method) %>%
+  summarise(
+    `Candidate molecules` = 100,
+    `Syntactic validation`       = sum(!is.na(QED)),
+    `Medicinal Chemistry Validation`  = sum(!is.na(bond_angles)) ,
+    `Structural validation`      = sum(pass_PoseBusters_Total, na.rm = T),
+    `Functional and Biological validation`  = sum(!is.na(reversal_score_scaled)),
+    .groups = "drop"
+  ) %>%
+  left_join(external_totals, by = "method") %>%
+    mutate(
+    `Candidate molecules`                  = 100,
+    `Syntactic validation`                  = `Syntactic validation` / Total * 100,
+    `Medicinal Chemistry Validation`       = `Medicinal Chemistry Validation` / Total * 100,
+    `Structural validation`                 = `Structural validation` / Total * 100,
+    `Functional and Biological validation` = `Functional and Biological validation` / Total * 100
+  ) %>%
+  dplyr::select(-Total) %>%
+  # Convert to long format for ggplot
+  pivot_longer(cols = -method, names_to = "Pipeline_Stage", values_to = "Percentage")
+
+
+
+# Ensure the pipeline stages maintain their chronological order on the plot
+df_passing$Pipeline_Stage <- factor(
+  df_passing$Pipeline_Stage, 
+  levels = df_passing$Pipeline_Stage%>%unique()
+)
+
+# 2. Create the Stacked Bar Chart (Using position = "identity" or side-by-side dodge)
+# Note: For passing rates, an "identity" overlay or a "dodge" (side-by-side) bar 
+# is mathematically cleaner than stacking them on top of each other, 
+# as Stage 4 is already a subset of Stage 3.
+ggplot(df_passing, aes(x = method, y = Percentage, fill = Pipeline_Stage)) +
+  geom_bar(stat = "identity", position = "dodge", width = 0.8, color = "white", size = 0.2) +
+  scale_fill_viridis_d(option = "mako", begin = 0.2, end = 0.8) + 
+  theme_classic(base_size = 14) +
+  labs(
+    x = "Methods",
+    y = "Pass rate (%)",
+    fill = "Stage"
+  ) +
+  theme(
+    panel.grid.major.x = element_blank(),
+    panel.grid.minor = element_blank(),
+    legend.position = "right",
+    plot.title = element_text(face = "bold"),
+    axis.text.x = element_text(angle = 45, hjust = 1)
+  )
+```
+
+### Drug-Like and Structural Pass Rates for Valid Molecules
+
+```{r}
+#| label: fig-3
+df = raw
+
+method_colors <- c(
+  "BiAAE"       = "#ff9999",
+  "BiCEV"       = "#ffbb99",
+  "FAME"        = "#ffecb3",
+  "Gex2SGen"    = "#ffffcc",
+  "GexMolGen"   = "#d4edda",
+  "GxRNN"       = "#a3e4d7",
+  "Paccmann RL" = "#a9cce3",
+  "SmilesGEN"   = "#bb8fce",
+  "TransGEM"    = "#d7bde2",
+  "TRIOMPHE"    = "#f5b7b1"
+)
+
+
+# 1. add posebusters pass and subset the dataframe to only include molecules with valid 3D conformations
+conformer_df <- df %>%
+  mutate(
+    pass_Basic_Chem = sanitization & all_atoms_connected & passes_valence_checks & passes_kekulization,
+    pass_Geometry   = bond_lengths & bond_angles & (number_clashes == 0),
+    pass_Planarity  = aromatic_ring_flatness & double_bond_flatness,
+    pass_PoseBusters_Total = pass_Basic_Chem & pass_Geometry & pass_Planarity
+  ) %>% 
+  filter(!is.na(pass_PoseBusters_Total))  # subset here
+
+# 2. Calculate the passing counts and percentages for each metric
+pass_rate_summary <- conformer_df %>%
+  group_by(method) %>%
+  summarise(
+    Total_Conformers = n(),
+    Count_Druglike  = sum((QED > 0.5) & (SA_Score < 4.5) & (MW < 500) & (LogP < 5) & (HBA <= 10) & (HBD <= 5), na.rm = TRUE),
+    Count_Structural = sum(pass_PoseBusters_Total, na.rm = T),
+    
+    # Percent Pass Rates (%)
+    Pct_Druglike     = (Count_Druglike / Total_Conformers) * 100,
+    Pct_Structural  = (Count_Structural / Total_Conformers) * 100,
+    
+    .groups = "drop"
+  ) %>%
+  # Pivot the counts into long format
+  pivot_longer(
+    cols = starts_with("Count_") | starts_with("Pct_"),
+    names_to = c(".value", "Metric"),
+    names_pattern = "(Count|Pct)_(.*)"
+  )
+
+ggplot(pass_rate_summary, aes(x = Metric, y = Pct, fill = method)) +
+  geom_bar(stat = "identity", position = position_dodge(width = 0.8), width = 0.7, color = "black", size = 0.1) +
+  # Add absolute molecule counts as text labels on top of the bars
+  geom_text(
+    aes(label = Count), 
+    position = position_dodge(width = 0.8), 
+    vjust = -0.4, 
+    size = 3, 
+    fontface = "bold",
+    lineheight = 0.8
+  ) +
+  scale_fill_manual(values = method_colors) +
+  ylim(0, 115) + # Add padding at the top for labels
+  theme_classic(base_size = 13) +
+  labs(
+    x = "Methods",
+    y = "Pass rate (%) among molecules \n satisfying Lipinski Rule of 5",
+    fill = "Generative Method"
+  ) +
+  theme(
+    panel.grid.major.x = element_blank(),
+    panel.grid.minor = element_blank(),
+    plot.title = element_text(face = "bold"),
+    legend.position = "top"
+  )
+```
+
+### Structural vs Drug-like
+
+```{r}
+#| label: fig-4
+
+data = raw
+external_totals = data %>%
+  group_by(method) %>%
+  summarise(
+    Total_Gen    = n())
+
+# 1. Calculate the counts from your raw data
+drug_like_analysis <- raw %>%
+  group_by(method) %>%
+  summarise(
+    # Raw passing counts for each individual gate
+    Stage1_Valid = sum(!is.na(QED)),
+    Stage2_Valid = sum((MW < 500) & 
+                         (LogP < 5) & (HBA <= 10) & (HBD <= 5), na.rm = TRUE),
+    Count_druglike = sum((QED > 0.5) & (SA_Score < 4.5) & (MW < 500) & (LogP < 5) & (HBA <= 10) & (HBD <= 5), na.rm = TRUE),
+    .groups = "drop"
+  ) %>%
+  # 2. Pivot to long format so we can handle metrics cleanly
+  pivot_longer(
+    cols = starts_with("Count_"),
+    names_to = "Metric",
+    values_to = "Passed_Count"
+  ) %>%
+  # 3. Merge/Join with your external totals dataframe
+  left_join(external_totals, by = "method") %>%
+  # 4. Clean metric names and calculate pass rates using the external denominators
+  mutate(
+    Metric = gsub("Count_", "", Metric),
+    Pass_Rate_Total  = (Passed_Count / Total_Gen) * 100,    # X-axis
+    Pass_Rate_Stage1 = (Passed_Count / Stage1_Valid) * 100, # Y-axis
+    Pass_Rate_Stage2 = (Passed_Count / Stage2_Valid) * 100
+  )
+
+p1 = ggplot(drug_like_analysis, aes(x = Pass_Rate_Total, y = Pass_Rate_Stage1, color = method, size = Passed_Count)) +
+  # Map the Stage 2 conditional pass rate to both color intensity and dot size
+  geom_point(aes(color = Pass_Rate_Stage2, size = Passed_Count, shape = method), stroke = 1.5) +
+
+  # Styling the visuals
+  scale_shape_manual(values = c(4:13)) + # Different shapes for different PB constraints
+  scale_color_gradientn(
+    colors = c("#9ecae1", "#de2d26"),
+    name = "Drug-like molecules"
+  ) + 
+  scale_size_continuous(range = c(3, 8), name = "Count") +
+  
+  xlim(0, 100) + ylim(0, 110) + # Added slight ceiling padding for text labels
+  theme_classic(base_size = 15) +
+  labs(
+    x = "Lipinski Rule of 5 (Stage 2) pass from Total Generated Set (%)",
+    y = "Lipinski Rule of 5 (Stage 2) pass from Stage 1 Syntax (%)"
+  ) +
+  theme(
+    plot.title = element_text(face = "bold"),
+    panel.grid.minor = element_blank(),
+    legend.position = "right"
+  )
+
+
+# 1. Calculate the three specific denominators for each PoseBusters metric
+posebusters_analysis <- raw %>%
+  mutate(
+    # Basic Chemistry Check
+    pass_Basic_Chem = sanitization & all_atoms_connected & passes_valence_checks & passes_kekulization,
+    
+    # Core Geometric Realism
+    pass_Geometry   = bond_lengths & bond_angles & (number_clashes == 0),
+    
+    # Flatness Requirements
+    pass_Planarity  = aromatic_ring_flatness & double_bond_flatness,
+    
+    # The Definitive PoseBusters Pass (Must clear everything)
+    pass_PoseBusters_Total = pass_Basic_Chem & pass_Geometry & pass_Planarity
+  ) %>%
+  group_by(method) %>%
+  summarise(
+    # Baselines
+    Stage1_Valid = sum(!is.na(QED)),
+    Stage2_Valid = sum((MW < 500) & 
+                       (LogP < 5) & (HBA <= 10) & (HBD <= 5), na.rm = TRUE),
+    Passed_Count   = sum(pass_PoseBusters_Total == TRUE, na.rm = TRUE),
+    
+    .groups = "drop"
+  ) %>%
+  left_join(external_totals, by = "method") %>%
+  mutate(
+    # Calculate your three distinct dimensions of performance
+    Pass_Rate_Total  = (Passed_Count / Total_Gen) * 100,     # X-axis
+    Pass_Rate_Stage1 = (Passed_Count / Stage1_Valid) * 100,   # Y-axis
+    Pass_Rate_Stage2 = (Passed_Count / Stage2_Valid) * 100    # Color & Size
+  )
+
+# 3. Generate the Multidimensional 2D Scatter Plot
+p2 = ggplot(posebusters_analysis, aes(x = Pass_Rate_Total, y = Pass_Rate_Stage1)) +
+  # Map the Stage 2 conditional pass rate to both color intensity and dot size
+  geom_point(aes(color = Pass_Rate_Stage2, size = Passed_Count, shape = method), stroke = 1.5) +
+
+  # Styling the visuals
+  scale_shape_manual(values = c(4:13)) + # Different shapes for different PB constraint
+  scale_color_gradientn(
+    colors = c("#9ecae1", "#de2d26"),
+    name = "Drug-like molecules"
+  ) + 
+  scale_size_continuous(range = c(3, 8), name = "Count") +
+  
+  xlim(0, 100) + ylim(0, 110) + # Added slight ceiling padding for text labels
+  theme_classic(base_size = 15) +
+  labs(
+    x = "Structural (Stage 3) Pass from Total Generated Set (%)",
+    y = "Structural (Stage 3) Pass from Stage 1 Syntax (%)"
+  ) +
+  theme(
+    plot.title = element_text(face = "bold"),
+    panel.grid.minor = element_blank(),
+    legend.position = "right"
+  )
+
+
+
+
+# now compare the attrition rate in stage 1 and stage 2 between the two dataframes 
+# 1. Join the two analyses on method (each already has Pass_Rate_Total/Stage1/Stage2)
+combined <- drug_like_analysis %>%
+  dplyr::select(method, 
+         DrugLike_Total  = Pass_Rate_Total, 
+         DrugLike_Stage1 = Pass_Rate_Stage1, 
+         DrugLike_Stage2 = Pass_Rate_Stage2,   # note: your drug_like_analysis names this differently, adjust if needed
+         DrugLike_Count  = Passed_Count) %>%
+  inner_join(
+    posebusters_analysis %>%
+      dplyr::select(method, 
+             Structural_Total  = Pass_Rate_Total, 
+             Structural_Stage1 = Pass_Rate_Stage1, 
+             Structural_Stage2 = Pass_Rate_Stage2,
+             Structural_Count  = Passed_Count),
+    by = "method"
+  )
+
+# 2. Reshape into long format so ggplot can facet by "Stage"
+combined_long <- combined %>%
+  pivot_longer(
+    cols = c(DrugLike_Total, DrugLike_Stage1, DrugLike_Stage2,
+             Structural_Total, Structural_Stage1, Structural_Stage2),
+    names_to = c("Metric", "Stage"),
+    names_pattern = "(DrugLike|Structural)_(.*)",
+    values_to = "Pass_Rate"
+  ) %>%
+  pivot_wider(
+    names_from = Metric,
+    values_from = Pass_Rate
+  ) %>%
+  mutate(Stage = factor(Stage, levels = c("Total", "Stage1", "Stage2"),
+                         labels = c("vs Total Generated", "vs Stage 1 Syntax-Valid", "vs Stage 2 Med-Chem-Valid")))
+
+# 3. One faceted plot: DrugLike (x) vs Structural (y), one panel per stage
+ggplot(combined_long, aes(x = DrugLike, y = Structural, fill = method, size = DrugLike_Count)) +
+  geom_point(shape = 21, color = "black", stroke = 0.8) +
+  geom_abline(intercept = 0, slope = 1, linetype = "dashed", color = "maroon") +
+  facet_wrap(~ Stage, nrow = 1) +
+  scale_fill_manual(values = method_colors) +
+  scale_size_continuous(range = c(3, 8), name = "Count") +
+  xlim(0, 100) + ylim(0, 100) +
+  theme_classic(base_size = 13) +
+  labs(
+    x = "Drug-like Pass Rate (%)",
+    y = "Structural (PoseBusters) Pass Rate (%)",
+    color = "Generative Method"
+  ) +
+  theme(
+    strip.text = element_text(face = "bold"),
+    plot.title = element_text(face = "bold"),
+    panel.grid.minor = element_blank(),
+    legend.position = "bottom"
+  )
+```
+
+### Stage wise comparison
+
+```{r}
+#| label: fig-5
+#| fig-width: 10
+#| fig-height: 4
+ggarrange(p1, p2, common.legend = T)
+```
+
+### Attrition: Drug-like metrics
+
+```{r}
+#| label: fig-6
+data = raw
+
+ext_data = raw
+
+external_totals = ext_data %>%
+  group_by(method) %>%
+  summarise(
+    N_total    = n()) 
+
+# ==============================================================================
+# 1. GENERATE THE SOURCE DATA (drug_like_funnel)
+# ==============================================================================
+
+# A. Compute Base Denominators for the 2D layer
+s2_denominators <- data %>%
+  group_by(method) %>%
+  summarise(                              # Total initial generations (Stage 0)
+    N_valid  = sum(is.na(QED)),                   # Syntax valid (where QED was successfully computed)
+    .groups = "drop"
+  ) %>%
+  left_join(external_totals, by = "method")
+  
+
+# B. Compute Passing Volumes and Multi-Baseline Rates (Including HBA and HBD)
+drug_like_funnel <- data %>%
+  group_by(method) %>%
+  summarise(
+    Count_QED   = sum(QED > 0.5, na.rm = TRUE),
+    Count_SA    = sum(SA_Score < 4.5, na.rm = TRUE),
+    Count_MW    = sum(MW < 500, na.rm = TRUE),
+    Count_LogP  = sum(LogP < 5, na.rm = TRUE),
+    Count_TPSA  = sum(TPSA < 140, na.rm = TRUE),
+    Count_HBA   = sum(HBA <= 10, na.rm = TRUE),
+    Count_HBD   = sum(HBD <= 5, na.rm = TRUE),
+    .groups = "drop"
+  ) %>%
+  left_join(s2_denominators, by = "method") %>%
+  pivot_longer(
+    cols = starts_with("Count_"), 
+    names_to = "Metric", 
+    values_to = "Passed_Count"
+  ) %>%
+  mutate(
+    Metric = gsub("Count_", "", Metric),
+    # Compute your 2 target baseline columns
+    total_pass_rate  = (Passed_Count / N_total) * 100,   # (Passed / Total Generated)
+    syntax_pass_rate = (Passed_Count / N_valid) * 100    # (Passed / Syntax Valid)
+  ) %>%
+  dplyr::select(method, Metric, total_pass_rate, syntax_pass_rate)
+
+
+# ==============================================================================
+# 2. TRANSFORM AND PLOT THE RIBBON GRAPHICS
+# ==============================================================================
+
+# A. Shape the data into a long plotting layout
+plot1_ribbon_data <- drug_like_funnel %>%
+  pivot_longer(
+    cols = c(total_pass_rate, syntax_pass_rate),
+    names_to = "Baseline",
+    values_to = "Rate"
+  ) %>%
+  mutate(
+    Baseline = factor(Baseline, levels = c("total_pass_rate", "syntax_pass_rate"),
+                      labels = c("Entire Library (Total)", "Syntax Valid Only")),
+    # Explicitly define factor levels to control subplot sequence ordering
+    Metric = factor(Metric, levels = c("QED", "SA", "MW", "LogP", "TPSA", "HBA", "HBD"))
+  )
+
+# B. Calculate intermediate gap locations for mid-ribbon text annotations
+gap_annotations <- drug_like_funnel %>%
+  mutate(
+    Gap = syntax_pass_rate - total_pass_rate,
+    Mid_X = (syntax_pass_rate + total_pass_rate) / 2,
+    Metric = factor(Metric, levels = c("QED", "SA", "MW", "LogP", "TPSA", "HBA", "HBD"))
+  )
+
+# C. Generate the exact ribbon dot plot configuration
+ggplot() +
+  # Draw the gray horizontal ribbon tracking the baseline gap
+  geom_segment(data = drug_like_funnel,
+               aes(x = total_pass_rate, xend = syntax_pass_rate, y = method, yend = method), 
+               color = "grey80", linewidth = 1) +
+  
+  # Baseline 1: All generated background baseline (Orange Circle)
+  geom_point(data = filter(plot1_ribbon_data, Baseline == "Entire Library (Total)"),
+             aes(x = Rate, y = method, color = Baseline), size = 4, shape = 16) +
+  
+  # Baseline 2: Conditional syntax-valid baseline (Blue Triangle)
+  geom_point(data = filter(plot1_ribbon_data, Baseline == "Syntax Valid Only"),
+             aes(x = Rate, y = method, color = Baseline), size = 3, shape = 17) +
+  
+  # # Overlay the numerical Gap value on top of the gray ribbon segments
+  # geom_text(data = gap_annotations,
+  #           aes(x = Mid_X, y = method, label = sprintf("%.1f", Gap)), 
+  #           vjust = -0.6, size = 2.8, colour = "grey30", fontface = "bold") +
+  
+  # Grid splittings based on the 7 explicit physicochemical filters
+  facet_wrap(~ Metric, ncol = 4) +
+
+  # Consistent color schema matching your pipeline
+  scale_color_manual(values = c("Entire Library (Total)" = "firebrick", "Syntax Valid Only" = "steelblue")) +
+  xlim(0, 105) +
+  theme_classic(base_size = 11) +
+  theme(
+    panel.grid.minor = element_blank(),
+    axis.text.y = element_text(),
+    legend.position = "bottom",
+    legend.title = element_blank()
+  ) +
+  labs(
+    y = "Method", 
+    x = "Pass Rate (%) from"
+  )
+
+
+
+# 1. Compute Base Denominators (Including the new Stage 2 Drug-like Anchor)
+s3_denominators <- data %>%
+  group_by(method) %>%
+  summarise(
+    N_valid    = sum(!is.na(QED)),
+    N_druglike = sum((QED > 0.5) & (SA_Score < 4.5) & (MW < 500) & (LogP < 5), na.rm = TRUE),
+    .groups = "drop"
+  ) %>%
+  left_join(external_totals, by = "method")
+
+# 2. Add structural flags and aggregate passing rates across all 3 denominators
+posebusters_funnel <- data %>%
+  mutate(
+    pass_Basic_Chem = sanitization & all_atoms_connected & passes_valence_checks & passes_kekulization,
+    pass_Geometry   = bond_lengths & bond_angles & (number_clashes == 0),
+    pass_Planarity  = aromatic_ring_flatness & double_bond_flatness,
+    pass_Total = pass_Basic_Chem & pass_Geometry & pass_Planarity
+  ) %>%
+  group_by(method) %>%
+  summarise(
+    Count_Basic_Structure   = sum(pass_Basic_Chem == TRUE, na.rm = TRUE),
+    Count_Geometry     = sum(pass_Geometry == TRUE, na.rm = TRUE),
+    Count_Planarity    = sum(pass_Planarity == TRUE, na.rm = TRUE),
+    Count_Total  = sum(pass_Total == TRUE, na.rm = TRUE),
+    .groups = "drop"
+  ) %>%
+  left_join(s3_denominators, by = "method") %>%
+  pivot_longer(
+    cols = starts_with("Count_"), 
+    names_to = "Metric", 
+    values_to = "Passed_Count"
+  ) %>%
+  mutate(
+    Metric = gsub("Count_", "", Metric),
+    # Compute your 3 target columns
+    total_pass_rate     = (Passed_Count / N_total) * 100,
+    syntax_pass_rate    = (Passed_Count / N_valid) * 100,
+    drug_like_pass_rate = (Passed_Count / N_druglike) * 100
+  ) %>%
+  dplyr::select(method, Metric, total_pass_rate, syntax_pass_rate, drug_like_pass_rate)
+
+
+# 1. Shape the 3D data into a long plotting format
+plot2_ribbon_data <- posebusters_funnel %>%
+  pivot_longer(
+    cols = c(total_pass_rate, syntax_pass_rate, drug_like_pass_rate),
+    names_to = "Baseline",
+    values_to = "Rate"
+  ) %>%
+  mutate(
+    Baseline = factor(Baseline, 
+                      levels = c("total_pass_rate", "syntax_pass_rate", "drug_like_pass_rate"),
+                      labels = c("Entire Library (Total)", "Syntax Valid Only", "Medchem Passed"))
+  )
+
+# 2. Plotting the 3D Matrix
+
+
+```
+
+### Attrition: Structural metrics
+
+```{r}
+#| label: fig-7
+ggplot(plot2_ribbon_data) +
+  # Draw the gray horizontal ribbon tracing across all 3 steps
+  geom_line(aes(x = Rate, y = method, group = method), color = "grey80", linewidth = 1) +
+  # Step 1: Total Baseline (Circle)
+  geom_point(data = filter(plot2_ribbon_data, Baseline == "Entire Library (Total)"),
+             aes(x = Rate, y = method, color = Baseline), size = 3.5, shape = 16) +
+  # Step 2: Syntax Valid Baseline (Triangle)
+  geom_point(data = filter(plot2_ribbon_data, Baseline == "Syntax Valid Only"),
+             aes(x = Rate, y = method, color = Baseline), size = 3.5, shape = 17) +
+  # Step 3: Pure Drug-Like Context Baseline (Square)
+  geom_point(data = filter(plot2_ribbon_data, Baseline == "Medchem Passed"),
+             aes(x = Rate, y = method, color = Baseline), size = 3.5, shape = 15) +
+  facet_wrap(~ Metric, ncol = 2) +
+  scale_color_manual(values = c(
+    "Entire Library (Total)" = "#D35400", 
+    "Syntax Valid Only" = "#1F618D",
+    "Medchem Passed" = "#27AE60"
+  )) +
+  xlim(0, 105) +
+  theme_classic(base_size = 11) +
+  theme(
+    panel.grid.minor = element_blank(),
+    legend.position = "bottom",
+    legend.title = element_blank()
+  ) +
+  labs(x = "Pass Rate (%) from", y = "Method")
+```
+:::
+
+## Distinct generative architectures occupy different regions of therapeutic evaluation space
+
+Comparing all syntactically valid molecules with the Pareto-optimal subset revealed distinct performance profiles across architectures @fig-8
+
+::: panel-tabset
+### Performance profile
+
+```{r}
+#| label: fig-8
+#| fig-height: 10
+# combining the geometric metrics to reduce dimensionality 
+set.seed(42)
+safe_div <- function(a, b) {
+  ifelse(is.na(b) | b == 0, 0, a / b)
+}
+
+clip01 <- function(x) {
+  pmin(pmax(x, 0), 1)
+}
+
+normalize_count <- function(x, cap) {
+  clip01(x / cap)
+}
+
+df = raw
+
+df <- df %>%
+  mutate(
+
+    # -------------------------
+    # structural validity
+    # -------------------------
+    structural_validity = rowMeans(cbind(
+      as.numeric(inchi_convertible),
+      as.numeric(all_atoms_connected),
+      as.numeric(no_radicals),
+      safe_div(number_valid_bonds, number_bonds),
+      safe_div(number_valid_angles, number_angles),
+      safe_div(number_valid_noncov_pairs, number_noncov_pairs)
+    ), na.rm = TRUE),
+
+    # -------------------------
+    # bond + angle consistency
+    # Having 10 completely distorted outlier bonds means a massive fraction ($20\%$ to $50\%$) of the entire  molecule's backbone is chemically deformed. Setting the cap at 10 isolates this severe, systemic geometry failure.
+    # -------------------------
+    bond_angle_consistency = 1 - clip01(
+      (normalize_count(number_short_outlier_bonds, 10) +
+       normalize_count(number_long_outlier_bonds, 10) +
+       normalize_count(number_outlier_angles, 10)) / 3
+    ),
+
+    # -------------------------
+    # steric feasibility
+    # -------------------------
+    steric_feasibility = 1 - clip01(
+      (normalize_count(number_clashes, 10) +
+       normalize_count(number_noncov_pairs, 20)) / 2
+    ),
+
+  # Non-Covalent Pairs: Non-covalent pairs represent close-contact interactions (like Van der Waals clashes or steric overlaps) between atoms that aren't directly bonded. Because every atom can potentially clash with multiple neighboring atoms, a poorly optimized 3D conformation can easily rack up dozens of unfavorable close contacts. A threshold of 10 would be crossed too easily by mild structural crowding, whereas 20 severe clashes represents a catastrophic packing failure.
+    # -------------------------
+    # ring planarity
+    # -------------------------
+    ring_planarity = rowMeans(cbind(
+
+      safe_div(number_aromatic_rings_pass,
+               number_aromatic_rings_checked),
+
+      safe_div(`number_non-aromatic_rings_pass`,
+               `number_non-aromatic_rings_checked`),
+
+      1 - clip01(aromatic_ring_maximum_distance_from_plane / 1),
+
+      1 - clip01(`non-aromatic_ring_maximum_distance_from_plane` / 1)
+
+    ), na.rm = TRUE),
+
+    # -------------------------
+    # double bond geometry
+    # -------------------------
+    double_bond_geometry = rowMeans(cbind(
+
+      safe_div(number_double_bonds_pass,
+               number_double_bonds_checked),
+
+      1 - clip01(double_bond_maximum_distance_from_plane / 1)
+
+    ), na.rm = TRUE)
+
+  )
+
+# Sanitization 
+meta  <- fread("Theraflow/method_processing/data/metrics_metadata.csv")
+selected_metrics = meta[Classification == "Chemical validity",]$Metric 
+
+df <- df %>%
+  mutate(weighted_sanitization = rowMeans(across(all_of(selected_metrics)), na.rm = TRUE))
+
+selected_metrics <- c(
+  "QED", "SA_Score", "MW", "LogP", "TPSA", "HBA", "HBD", "F_Csp3",
+  "structural_validity", "bond_angle_consistency", "steric_feasibility", 
+  "double_bond_geometry", "weighted_sanitization", "Sim_Morg_Tani", 
+  "energy_ratio", 'ensemble_avg_energy', 'reversal_score_scaled'
+)
+
+# df_clean <- df %>%
+#   drop_na(all_of(selected_metrics))
+
+
+df_ready <- df %>%
+  filter(
+    number_clashes == 0 & Passes_Safety == TRUE
+  ) # optimize for pareto (needs to be noted clearly in the methods)
+
+p_11d <- high(QED) * low(SA_Score) * low(MW) * low(LogP) * low(TPSA) * low(HBA) * low(HBD) * high(bond_angle_consistency) * high(steric_feasibility) * high(double_bond_geometry) * high(weighted_sanitization) * high(Sim_Morg_Tani) * low(energy_ratio)* low(ensemble_avg_energy) * high(F_Csp3) * high(reversal_score_scaled)
+
+pareto_11d_results <- psel(df_ready, p_11d, top = nrow(df_ready))
+
+top <- pareto_11d_results %>%
+  filter(.level == 1)
+
+radar_pillars_df <- top %>%
+  # 1. First, normalize individual metrics on a 0-1 scale across the whole dataset 
+  mutate(
+    # Inversions (Higher must equal better/more optimized)
+    norm_QED                  = rescale(QED, to = c(0, 1)),
+    norm_SA                   = rescale(10 - SA_Score, to = c(0, 1)), # Higher = easier to synthesize
+    norm_MW                   = rescale(MW, to = c(0, 1)),
+    norm_LogP                 = rescale(LogP, to = c(0, 1)),
+    norm_TPSA                 = rescale(TPSA, to = c(0, 1)),
+    norm_HBA                  = rescale(HBA, to = c(0, 1)),
+    norm_HBD                  = rescale(HBD, to = c(0, 1)),
+    norm_F_Csp3               = rescale(F_Csp3, to = c(0, 1)),
+    
+    norm_structural_validity  = rescale(structural_validity, to = c(0, 1)),
+    norm_bond_consistency     = rescale(bond_angle_consistency, to = c(0, 1)),
+    norm_steric_feasibility   = rescale(steric_feasibility, to = c(0, 1)),
+    norm_double_bond          = rescale(double_bond_geometry, to = c(0, 1)),
+    norm_sanitization         = rescale(weighted_sanitization, to = c(0, 1)),
+    norm_similarity           = Sim_Morg_Tani,
+    
+    norm_energy_ratio         = rescale(energy_ratio, to = c(0, 1)),
+    norm_energy_stability     = rescale(-1 * ensemble_avg_energy, to = c(0, 1)) # Higher = more stable
+  ) %>%
+  # 2. Construct the 3 requested macro-pillars by calculating row means per molecule
+  mutate(
+    `Drug-likeness` = rowMeans(cbind(
+      norm_QED, norm_SA, norm_MW, norm_LogP, norm_TPSA, norm_HBA, norm_HBD, norm_F_Csp3
+    ), na.rm = TRUE),
+    
+    `Structural Properties` = rowMeans(cbind(
+      norm_structural_validity, norm_bond_consistency, norm_steric_feasibility, 
+      norm_double_bond, norm_sanitization
+    ), na.rm = TRUE),
+    
+    `Energy (Molecular Dynamics)` = rowMeans(cbind(
+      norm_energy_ratio, norm_energy_stability
+    ), na.rm = TRUE)
+  ) %>%
+  # 3. Collapse the data down to the individual Method averages
+  group_by(method) %>%
+  summarise(
+    `Drug-likeness`               = mean(`Drug-likeness`, na.rm = TRUE),
+    `Structural Properties`       = mean(`Structural Properties`, na.rm = TRUE),
+     Energy = mean(`Energy (Molecular Dynamics)`, na.rm = TRUE),
+     DRS = mean(reversal_score_scaled, na.rm = TRUE),
+     Similarity = mean(norm_similarity)
+  ) %>%
+  # 4. Final safety rescaling to guarantee the geometry spans exactly 0 to 1
+  mutate(across(-method, rescale, to = c(0, 1)))
+
+radar_pillars_df[, -1][is.na(radar_pillars_df[, -1])] <- 0
+
+# 5. Generate the 3-axis Radar Plot
+p1 = ggradar(
+  plot.data = radar_pillars_df,
+  values.radar = c("0%", "50%", "100%"),
+  grid.min = 0, grid.mid = 0.5, grid.max = 1,
+  gridline.min.colour = "grey85", gridline.mid.colour = "grey85", gridline.max.colour = "grey50",
+  group.line.width = 0.5,
+  group.point.size = 3,
+  axis.label.size = 4,   # Makes your 3 outer labels clear and prominent
+  grid.label.size = 4, 
+  legend.text.size = 10
+) +
+  theme_void() + 
+  theme(
+    plot.margin = margin(t = 20, r = 50, b = 20, l = 50, unit = "pt"), # Increase right and left margins
+    legend.position = "",
+    plot.title = element_text(face = "bold", size = 14, hjust = 0.5, margin = margin(b = 15))
+  ) + ggtitle("Top Pareto Molecules")
+
+
+# - is this an artefact of selection?
+# a. radar plots
+
+radar_pillars_df <- df %>%
+  # 1. First, normalize individual metrics on a 0-1 scale across the whole dataset 
+  mutate(
+    # Inversions (Higher must equal better/more optimized)
+    norm_QED                  = rescale(QED, to = c(0, 1)),
+    norm_SA                   = rescale(10 - SA_Score, to = c(0, 1)), # Higher = easier to synthesize
+    norm_MW                   = rescale(MW, to = c(0, 1)),
+    norm_LogP                 = rescale(LogP, to = c(0, 1)),
+    norm_TPSA                 = rescale(TPSA, to = c(0, 1)),
+    norm_HBA                  = rescale(HBA, to = c(0, 1)),
+    norm_HBD                  = rescale(HBD, to = c(0, 1)),
+    norm_F_Csp3               = rescale(F_Csp3, to = c(0, 1)),
+    
+    norm_structural_validity  = rescale(structural_validity, to = c(0, 1)),
+    norm_bond_consistency     = rescale(bond_angle_consistency, to = c(0, 1)),
+    norm_steric_feasibility   = rescale(steric_feasibility, to = c(0, 1)),
+    norm_double_bond          = rescale(double_bond_geometry, to = c(0, 1)),
+    norm_sanitization         = rescale(weighted_sanitization, to = c(0, 1)),
+    norm_similarity           = Sim_Morg_Tani,
+    
+    norm_energy_ratio         = rescale(energy_ratio, to = c(0, 1)),
+    norm_energy_stability     = rescale(-1 * ensemble_avg_energy, to = c(0, 1)) # Higher = more stable
+  ) %>%
+  # 2. Construct the 3 requested macro-pillars by calculating row means per molecule
+  mutate(
+    `Drug-likeness` = rowMeans(cbind(
+      norm_QED, norm_SA, norm_MW, norm_LogP, norm_TPSA, norm_HBA, norm_HBD, norm_F_Csp3
+    ), na.rm = TRUE),
+    
+    `Structural Properties` = rowMeans(cbind(
+      norm_structural_validity, norm_bond_consistency, norm_steric_feasibility, 
+      norm_double_bond, norm_sanitization
+    ), na.rm = TRUE),
+    
+    `Energy (Molecular Dynamics)` = rowMeans(cbind(
+      norm_energy_ratio, norm_energy_stability
+    ), na.rm = TRUE)
+  ) %>%
+  # 3. Collapse the data down to the individual Method averages
+  group_by(method) %>%
+  summarise(
+    `Drug-likeness`               = mean(`Drug-likeness`, na.rm = TRUE),
+    `Structural Properties`       = mean(`Structural Properties`, na.rm = TRUE),
+    Energy = mean(`Energy (Molecular Dynamics)`, na.rm = TRUE),
+     DRS = mean(reversal_score_scaled, na.rm = TRUE),
+     Similarity = mean(norm_similarity)
+  ) %>%
+  # 4. Final safety rescaling to guarantee the geometry spans exactly 0 to 1
+  mutate(across(-method, rescale, to = c(0, 1)))
+
+radar_pillars_df[, -1][is.na(radar_pillars_df[, -1])] <- 0
+
+# 5. Generate the 3-axis Radar Plot
+p2 = ggradar(
+  plot.data = radar_pillars_df,
+  values.radar = c("0%", "50%", "100%"),
+  grid.min = 0, grid.mid = 0.5, grid.max = 1,
+  gridline.min.colour = "grey85", gridline.mid.colour = "grey85", gridline.max.colour = "grey50",
+  group.line.width = 0.5,
+  group.point.size = 3,
+  axis.label.size = 4,   # Makes your 3 outer labels clear and prominent
+  grid.label.size = 4, 
+  legend.text.size = 10
+) +
+  theme_void() + 
+  theme(
+    legend.position = "bottom",
+    plot.margin = margin(t = 20, r = 50, b = 20, l = 50, unit = "pt"), # Increase right and left margins
+    plot.title = element_text(face = "bold", size = 14, hjust = 0.5, margin = margin(b = 15))
+  ) + ggtitle("All Generated Molecules")
+library(ggpubr)
+library(cowplot)
+
+plot_grid(
+  p1, p2, 
+  ncol = 1, 
+  align = "v", 
+  rel_heights = c(1, 1.2)
+)
+
+```
+
+### Covariance of metrics on top molecules
+
+```{r}
+#| label: fig-9
+#| fig-width: 10
+#| fig-height: 10
+cov_dat <- top %>%
+  # 1. First, normalize individual metrics on a 0-1 scale across the whole dataset 
+  mutate(
+    # Inversions (Higher must equal better/more optimized)
+    norm_QED                  = rescale(QED, to = c(0, 1)),
+    norm_SA                   = rescale(10 - SA_Score, to = c(0, 1)), # Higher = easier to synthesize
+    norm_MW                   = rescale(MW, to = c(0, 1)),
+    norm_LogP                 = rescale(LogP, to = c(0, 1)),
+    norm_TPSA                 = rescale(TPSA, to = c(0, 1)),
+    norm_HBA                  = rescale(HBA, to = c(0, 1)),
+    norm_HBD                  = rescale(HBD, to = c(0, 1)),
+    norm_F_Csp3               = rescale(F_Csp3, to = c(0, 1)),
+    
+    norm_structural_validity  = rescale(structural_validity, to = c(0, 1)),
+    norm_bond_consistency     = rescale(bond_angle_consistency, to = c(0, 1)),
+    norm_steric_feasibility   = rescale(steric_feasibility, to = c(0, 1)),
+    norm_double_bond          = rescale(double_bond_geometry, to = c(0, 1)),
+    norm_sanitization         = rescale(weighted_sanitization, to = c(0, 1)),
+    norm_similarity           = Sim_Morg_Tani,
+    
+    norm_energy_ratio         = rescale(energy_ratio, to = c(0, 1)),
+    norm_energy_stability     = rescale(-1 * ensemble_avg_energy, to = c(0, 1)) # Higher = more stable
+  )
+
+individual_metrics <- c(
+  "norm_QED", "norm_SA", "norm_MW", "norm_LogP", "norm_TPSA", "norm_HBA", "norm_HBD", "norm_F_Csp3",
+  "norm_structural_validity", "norm_bond_consistency", "norm_steric_feasibility", "norm_double_bond", "norm_sanitization",
+  "norm_energy_ratio", "norm_energy_stability",
+  "reversal_score_scaled", "norm_similarity"
+)
+
+global_cov <- cov(cov_dat[, ..individual_metrics], use = "pairwise.complete.obs")
+
+# 3. Fix your Method List calculation
+cov_list <- cov_dat %>%
+  split(by = "method") %>%
+  map(function(d) {
+    # Force subsetting down to JUST the numeric metrics vector before running cov()
+    cov(d[, ..individual_metrics], use = "pairwise.complete.obs")
+  })
+
+
+plot_data_absolute <- imap_dfr(cov_list, function(cov_mat, arch_name) {
+  
+  # Turn the matrix into a table/dataframe directly without subtraction
+  as.data.frame(as.table(cov_mat)) %>%
+    rename(
+      class1 = Var1,
+      class2 = Var2,
+      abs_cov = Freq # Keeping track that this is absolute covariance
+    ) %>%
+    mutate(method = arch_name)
+})
+
+
+plot_data_low <- plot_data_absolute %>%
+  mutate(across(c(class1, class2), ~ . %>%
+                str_remove_all("norm_") %>%
+                str_replace_all("_", " ") %>%
+                tools::toTitleCase()
+  )) %>%
+  # This keeping condition forces the lower triangle layout
+  filter(as.character(class1) >= as.character(class2))
+
+finite_vals <- plot_data_low$abs_cov[is.finite(plot_data_low$abs_cov)]
+cov_range <- quantile(finite_vals, probs = c(0.01, 0.99))
+dynamic_breaks <- seq(
+  from = cov_range[1], 
+  to = cov_range[2], 
+  length.out = 6
+)
+
+
+# Assuming plot_data_low is already filtered for the lower triangle
+ggplot(plot_data_low, aes(x = class1, y = class2, fill = abs_cov)) +
+  geom_tile(color = "white", linewidth = 0.4) + 
+  facet_wrap(~method, nrow = 2) + 
+  # Use a binned scale tailored exactly to your dense low-value distribution
+  scale_fill_stepsn(
+  colors = c("#e0f3f8", "#abd9e9", "#bfd3e6", "#9ebcda", "#8c96c6", "#8c6bb1", "#810f7c"),
+  breaks = dynamic_breaks,
+  labels = round(dynamic_breaks, 3),
+  limits = cov_range,
+  na.value = "grey95"
+)+
+  theme_minimal(base_family = "sans") +
+  theme(
+    axis.text.x = element_text(angle = 90, hjust = 1, vjust = 1, size = 7, color = "grey20"),
+    axis.text.y = element_text(size = 7, color = "grey20"),
+    panel.grid = element_blank(),
+    strip.background = element_rect(fill = "grey95", color = NA), # Soft box for method titles
+    strip.text = element_text(face = "bold", size = 9, color = "grey10"),
+    legend.position = "right",
+    legend.title = element_text(size = 8, face = "bold"),
+    legend.text = element_text(size = 7)
+  ) +
+  labs(
+    fill = "Absolute\nCovariance",
+    x = NULL, y = NULL
+  ) +
+  coord_fixed()
+
+cov_dat <- df %>%
+  # 1. First, normalize individual metrics on a 0-1 scale across the whole dataset 
+  mutate(
+    # Inversions (Higher must equal better/more optimized)
+    norm_QED                  = rescale(QED, to = c(0, 1)),
+    norm_SA                   = rescale(10 - SA_Score, to = c(0, 1)), # Higher = easier to synthesize
+    norm_MW                   = rescale(MW, to = c(0, 1)),
+    norm_LogP                 = rescale(LogP, to = c(0, 1)),
+    norm_TPSA                 = rescale(TPSA, to = c(0, 1)),
+    norm_HBA                  = rescale(HBA, to = c(0, 1)),
+    norm_HBD                  = rescale(HBD, to = c(0, 1)),
+    norm_F_Csp3               = rescale(F_Csp3, to = c(0, 1)),
+    
+    norm_structural_validity  = rescale(structural_validity, to = c(0, 1)),
+    norm_bond_consistency     = rescale(bond_angle_consistency, to = c(0, 1)),
+    norm_steric_feasibility   = rescale(steric_feasibility, to = c(0, 1)),
+    norm_double_bond          = rescale(double_bond_geometry, to = c(0, 1)),
+    norm_sanitization         = rescale(weighted_sanitization, to = c(0, 1)),
+    norm_similarity           = Sim_Morg_Tani,
+    
+    norm_energy_ratio         = rescale(energy_ratio, to = c(0, 1)),
+    norm_energy_stability     = rescale(-1 * ensemble_avg_energy, to = c(0, 1)) # Higher = more stable
+  )
+
+individual_metrics <- c(
+  "norm_QED", "norm_SA", "norm_MW", "norm_LogP", "norm_TPSA", "norm_HBA", "norm_HBD", "norm_F_Csp3",
+  "norm_structural_validity", "norm_bond_consistency", "norm_steric_feasibility", "norm_double_bond", "norm_sanitization",
+  "norm_energy_ratio", "norm_energy_stability",
+  "reversal_score_scaled", "norm_similarity"
+)
+
+global_cov <- cov(cov_dat[, ..individual_metrics], use = "pairwise.complete.obs")
+
+# 3. Fix your Method List calculation
+cov_list <- cov_dat %>%
+  split(by = "method") %>%
+  map(function(d) {
+    # Force subsetting down to JUST the numeric metrics vector before running cov()
+    cov(d[, ..individual_metrics], use = "pairwise.complete.obs")
+  })
+
+plot_data_absolute <- imap_dfr(cov_list, function(cov_mat, arch_name) {
+  
+  # Turn the matrix into a table/dataframe directly without subtraction
+  as.data.frame(as.table(cov_mat)) %>%
+    rename(
+      class1 = Var1,
+      class2 = Var2,
+      abs_cov = Freq # Keeping track that this is absolute covariance
+    ) %>%
+    mutate(method = arch_name)
+})
+
+
+plot_data_low_all <- plot_data_absolute %>%
+  mutate(across(c(class1, class2), ~ stringr::str_remove_all(., "norm_"))) %>%
+  # This keeping condition forces the lower triangle layout
+  filter(as.character(class1) >= as.character(class2))
+
+plot_data = plot_data_low
+plot_data$cov_diff = plot_data_low$abs_cov - plot_data_low_all$abs_cov
+
+plot_data <- plot_data %>%
+  mutate(across(c(class1, class2), ~ . %>%
+                str_replace_all("_", " ") %>%
+                tools::toTitleCase()
+  )) 
+
+# Assuming plot_data_low is already filtered for the lower triangle
+cov_all_plot = ggplot(plot_data, aes(x = class1, y = class2, fill = cov_diff)) +
+  geom_tile(color = "white", linewidth = 0.4) + 
+  facet_wrap(~method, nrow = 2) + 
+  # Use a binned scale tailored exactly to your dense low-value distribution
+  scale_fill_stepsn(
+  colors = c("#e0f3f8", "#abd9e9", "#bfd3e6", "#9ebcda", "#8c96c6", "#8c6bb1", "#810f7c"),
+  breaks = dynamic_breaks,
+  labels = round(dynamic_breaks, 3),
+  limits = cov_range,
+  na.value = "grey95"
+) +
+  theme_minimal(base_family = "sans") +
+  theme(
+    axis.text.x = element_text(angle = 90, hjust = 1, vjust = 1, size = 9, color = "grey20"),
+    axis.text.y = element_text(size = 9, color = "grey20"),
+    panel.grid = element_blank(),
+    strip.background = element_rect(fill = "grey95", color = NA), # Soft box for method titles
+    strip.text = element_text(face = "bold", size = 12, color = "grey10"),
+    legend.position = "right",
+    legend.title = element_text(size = 12, face = "bold"),
+    legend.text = element_text(size = 12)
+  ) +
+  labs(
+    fill = "Covariance\nDifference",
+    x = NULL, y = NULL
+  ) +
+  coord_fixed()
+
+plot_data_low_all <- plot_data_low_all %>%
+  mutate(across(c(class1, class2), ~ . %>%
+                str_replace_all("_", " ") %>%
+                tools::toTitleCase()
+  )) 
+
+
+cov_diff_plot= ggplot(plot_data_low_all, aes(x = class1, y = class2, fill = abs_cov)) +
+  geom_tile(color = "white", linewidth = 0.4) + 
+  facet_wrap(~method, nrow = 2) + 
+  # Use a binned scale tailored exactly to your dense low-value distribution
+  scale_fill_stepsn(
+    colors = c("#e0f3f8", "#abd9e9", "#bfd3e6", "#9ebcda", "#8c96c6", "#8c6bb1", "#810f7c"),
+    breaks = dynamic_breaks,
+    labels = round(dynamic_breaks, 3),
+    limits = cov_range,
+    na.value = "grey95"
+  ) +
+  theme_minimal(base_family = "sans") +
+  theme(
+    axis.text.x = element_text(angle = 90, hjust = 1, vjust = 1, size = 9, color = "grey20"),
+    axis.text.y = element_text(size = 9, color = "grey20"),
+    panel.grid = element_blank(),
+    strip.background = element_rect(fill = "grey95", color = NA), # Soft box for method titles
+    strip.text = element_text(face = "bold", size = 12, color = "grey10"),
+    legend.position = "right",
+    legend.title = element_text(size = 12, face = "bold"),
+    legend.text = element_text(size = 12)
+  ) +
+  labs(
+    fill = "Covariance",
+    x = NULL, y = NULL
+  ) +
+  coord_fixed()
+```
+
+### Architecture comparison
+
+```{r}
+#| label: fig-10
+#| fig-height: 10
+top_data = top %>%
+  # 1. First, normalize individual metrics on a 0-1 scale across the whole dataset 
+  mutate(
+    # Inversions (Higher must equal better/more optimized)
+    norm_QED                  = rescale(QED, to = c(0, 1)),
+    norm_SA                   = rescale(10 - SA_Score, to = c(0, 1)), # Higher = easier to synthesize
+    norm_MW                   = rescale(MW, to = c(0, 1)),
+    norm_LogP                 = rescale(LogP, to = c(0, 1)),
+    norm_TPSA                 = rescale(TPSA, to = c(0, 1)),
+    norm_HBA                  = rescale(HBA, to = c(0, 1)),
+    norm_HBD                  = rescale(HBD, to = c(0, 1)),
+    norm_F_Csp3               = rescale(F_Csp3, to = c(0, 1)),
+    
+    norm_structural_validity  = rescale(structural_validity, to = c(0, 1)),
+    norm_bond_consistency     = rescale(bond_angle_consistency, to = c(0, 1)),
+    norm_steric_feasibility   = rescale(steric_feasibility, to = c(0, 1)),
+    norm_double_bond          = rescale(double_bond_geometry, to = c(0, 1)),
+    norm_sanitization         = rescale(weighted_sanitization, to = c(0, 1)),
+    norm_similarity           = Sim_Morg_Tani,
+    
+    norm_energy_ratio         = rescale(energy_ratio, to = c(0, 1)),
+    norm_energy_stability     = rescale(-1 * ensemble_avg_energy, to = c(0, 1)) # Higher = more stable
+  )
+
+individual_metrics <- c(
+  "norm_QED", "norm_SA", "norm_MW", "norm_LogP", "norm_TPSA", "norm_HBA", "norm_HBD", "norm_F_Csp3",
+  "norm_structural_validity", "norm_bond_consistency", "norm_steric_feasibility", "norm_double_bond", "norm_sanitization",
+  "norm_energy_ratio", "norm_energy_stability",
+  "reversal_score_scaled", "norm_similarity"
+)
+
+architecture_complexity <- read_csv("Theraflow/method_processing/data/architecture_complexity.csv")
+architecture_complexity <- architecture_complexity %>%
+  mutate(method = case_when(
+    method == "biaee"       ~ "BiAAE",
+    method == "bicev"       ~ "BiCEV",
+    method == "fame"        ~ "FAME",
+    method == "gex2sgen"    ~ "Gex2SGen",
+    method == "gexmolgen"   ~ "GexMolGen",
+    method == "gxrnn"       ~ "GxRNN",
+    method == "paccmann_rl" ~ "Paccmann RL",
+    method == "smilesgen"   ~ "SmilesGEN",
+    method == "transgem"    ~ "TransGEM",
+    method == "triomphe"    ~ "TRIOMPHE",
+    TRUE                    ~ method # Keeps any unexpected values as-is
+  ))
+top_df = inner_join(top,architecture_complexity, by = "method")
+
+method_metric_df <- top_df %>% mutate(
+    # Inversions (Higher must equal better/more optimized)
+    QED                  = rescale(QED, to = c(0, 1)),
+    SA                   = rescale(10 - SA_Score, to = c(0, 1)), # Higher = easier to synthesize
+    MW                   = rescale(MW, to = c(0, 1)),
+    LogP                 = rescale(LogP, to = c(0, 1)),
+    TPSA                 = rescale(TPSA, to = c(0, 1)),
+    HBA                  = rescale(HBA, to = c(0, 1)),
+    HBD                  = rescale(HBD, to = c(0, 1)),
+    F_Csp3               = rescale(F_Csp3, to = c(0, 1)),
+    
+    structural_validity  = rescale(structural_validity, to = c(0, 1)),
+    steric_feasibility   = rescale(steric_feasibility, to = c(0, 1)),
+    double_bond          = rescale(double_bond_geometry, to = c(0, 1)),
+    sanitization         = rescale(weighted_sanitization, to = c(0, 1)),
+    similarity           = Sim_Morg_Tani,
+    DRS = reversal_score_scaled) %>%
+    group_by(method) %>%
+    summarise(
+        across(
+            c(QED, SA, MW, LogP, TPSA,
+              HBA, HBD, F_Csp3,
+              similarity,
+              DRS),
+            ~mean(.x, na.rm = TRUE)
+        ),
+        across(
+            c(structural_validity,
+             steric_feasibility,
+              double_bond,
+              sanitization),
+            ~mean(.x, na.rm = TRUE)
+        )
+    )
+
+metric_mat <- method_metric_df %>%
+  column_to_rownames("method") %>%
+  as.matrix()
+
+metric_mat_scaled <- metric_mat
+metric_mat_scaled <- t(metric_mat_scaled)
+
+# --- 1. Data Preparation ---
+# (Assuming method_metric_df, metric_mat_scaled, and annotation_df are prepared as per our previous logic)
+
+# Define the row grouping mapping
+row_groups <- c(
+  "QED" = "Drug-like", "SA" = "Drug-like", "MW" = "Drug-like", 
+  "LogP" = "Drug-like", "TPSA" = "Drug-like", "HBA" = "Drug-like", 
+  "HBD" = "Drug-like", "F Csp3" = "Drug-like",
+  "Structural Validity" = "Structural", 
+  "Steric Feasibility" = "Structural", "Double Bond" = "Structural", 
+  "Sanitization" = "Structural",
+  "Similarity" = "Structural", "DRS" = "DRS"
+)
+library(circlize)
+# --- 2. Annotation & Heatmap ---
+# High-contrast color scale (Deep Blue to White to Deep Red)
+col_fun <- colorRamp2(c(0, 0.5, 1), c("#2166ac", "#f7f7f7", "#b2182b"))
+annotation_df = architecture_complexity
+model_order <- colnames(metric_mat_scaled)
+
+# 2. Reorder your annotation dataframe to match the matrix exactly
+# Assuming 'method' is the column name in architecture_complexity
+annotation_df <- annotation_df %>% 
+  slice(match(model_order, method))
+
+# 3. Verify it worked
+print(all(annotation_df$method == model_order)) # Should be TRUE
+top_colors <- list(
+  "Gene Architecture" = c(
+    "MLP VAE"             = "#67A2C5", 
+    "Transformer Encoder" = "#9BCEC1", 
+    "None"                = "#FFEBD3", 
+    "Linear"              = "#FFB6A6"
+  ),
+  
+  "Molecule Arch" = c(
+    "GRU"                 = "#E4B028", 
+    "LSTM"                = "#EBEDE3", 
+    "MPN MLP"             = "#124D1C", 
+    "Transformer Decoder" = "#0B1849"
+  ),
+  
+  "Molecule Rep" = c(
+    "SMILES"              = "#D90000", 
+    "Graph"               = "#FFEA93", 
+    "SELFIES"             = "#d7bde2"
+  ),
+  
+  "Alignment" = c(
+    "Hierarchical"        = "#E41A1C", 
+    "Attention-Gated"     = "#8DB355", 
+    "Adversarial Alignment" = "#FF3483", 
+    "Direct conditioners"   = "#F5CBCB"
+  )
+)
+
+library(ComplexHeatmap)
+top_anno <- HeatmapAnnotation(
+  "Gene Architecture" = annotation_df$Gene_Expression_Architecture,
+  "Molecule Arch"     = annotation_df$Molecule_Architecture,
+  "Molecule Rep"      = annotation_df$Molecule_Representation,
+  "Alignment" = annotation_df$Architecture_alignment,
+  "Layers"            = anno_barplot(annotation_df$`Total number of layers (includes both the gene and molecule)`, 
+                                     height = unit(2, "cm"), 
+                                     gp = gpar(fill = "#4D4861", col = NA)),
+  annotation_name_side = "left",
+  annotation_name_gp   = gpar(fontsize = 10, fontface = "bold"),
+  gap = unit(2, "mm"),
+  col = top_colors
+)
+
+bot_anno <- HeatmapAnnotation(
+  "ELBO" = annotation_df$ELBO,
+  "Reconstruction" = annotation_df$Reconstruction,
+  "Shared"     = annotation_df$Shared,
+  "Discriminator"      = annotation_df$Discriminator,
+  "Policy gradient"            = annotation_df$Policy,
+  "Multimodal" = annotation_df$Multimodal,
+  annotation_name_side = "right",
+  annotation_name_gp   = gpar(fontsize = 10, fontface = "bold"),
+  gap = unit(2, "mm")
+)
+
+# This replaces the need for text and fixes the label-display issue
+binary_col <- c("1" = "#87BBA2", "0" = "white")
+
+bot_anno <- HeatmapAnnotation(
+  "ELBO"            = anno_simple(as.character(annotation_df$`ELBO based Loss`), col = binary_col, border = TRUE),
+    "Reconstruction"            = anno_simple(as.character(annotation_df$Reconstruction), col = binary_col, border = TRUE),
+  "Shared"          = anno_simple(as.character(annotation_df$`Shared Loss`), col = binary_col, border = TRUE),
+  "Discriminator"   = anno_simple(as.character(annotation_df$Discriminator), col = binary_col, border = TRUE),
+  "Policy gradient" = anno_simple(as.character(annotation_df$`Policy gradient`), col = binary_col, border = TRUE),
+  "Multimodal"      = anno_simple(as.character(annotation_df$Multimodal), col = binary_col, border = TRUE),
+  "NLL" = anno_simple(as.character(annotation_df$`Negative log-likelihood`), col = binary_col, border = TRUE),
+  
+  show_annotation_name = TRUE,
+  annotation_name_side = "left",
+  annotation_name_gp   = gpar(fontsize = 8),
+  gap = unit(1, "mm")
+)
+metric_mat_scaled[is.na(metric_mat_scaled)] <- 0
+
+rownames(metric_mat_scaled) = rownames(metric_mat_scaled) %>%
+                str_replace_all("_", " ") %>%
+                tools::toTitleCase()
+Heatmap(
+  metric_mat_scaled,
+  name = "Normalized \n value",
+  col = col_fun,
+  top_annotation = top_anno,
+  bottom_annotation = bot_anno,
+  
+  # Aesthetic styling
+  rect_gp = gpar(col = "white", lwd = 0.5), # Subtle cell borders
+  row_split = row_groups[rownames(metric_mat_scaled)],
+  row_title_rot = 0,
+  row_title_gp = gpar(fontface = "bold"),
+  
+  cluster_rows = FALSE,
+  cluster_columns = TRUE,
+  show_row_names = TRUE,
+  show_column_names = TRUE,
+  column_names_rot = 90,
+  row_names_gp = gpar(fontsize = 9),
+  
+  # Legend at bottom
+  heatmap_legend_param = list(
+    direction = "vertical",
+    title_position = "leftcenter-rot",
+    legend_width = unit(3, "cm")
+  )
+)
+```
+:::
+
+## Downstream validation reveals limited transfer of performance across evaluation stages
+
+Only a small proportion of prioritised molecules satisfied the predefined molecular dynamics criteria @fig-12
+
+::: panel-tabset
+### Docking and MD metrics
+
+```{r}
+#| label: fig-11
+md_metrics <- raw
+
+library(ggdist)
+# 1. Prepare your data
+# Select the metrics of interest
+metrics_to_plot <- c("iPTM", "PTM", "Ranking_Score", "Total_SCF_Energy_Eh", 
+                     "HOMO_LUMO_Gap_eV", "Total_Dipole_Moment_Debye", "Pocket_Backbone_RMSD", 
+                     "Ligand_RMSD_Pocket_Aligned", "Ligand_Self_Aligned_RMSD")
+
+long_md_metrics <- md_metrics %>%
+  dplyr::select(method, all_of(metrics_to_plot)) %>%
+  pivot_longer(cols = -method, names_to = "Metric", values_to = "Value")
+# Define thresholds for "Good" performance
+thresholds <- data.frame(
+  Metric = c("Ligand_RMSD_Pocket_Aligned", "Pocket_Backbone_RMSD", "xTB_Gap_eV", "iPTM"),
+  Lower = c(0, 0, 0.05, 0.8),
+  Upper = c(2.0, 2.0, 0.15, 1.0),
+  Label = c("Stable", "Stable", "Drug-like Gap", "High Confidence")
+)
+
+thresholds <- data.frame(
+  Metric = c("iPTM", "PTM", "Ranking_Score", "Total_SCF_Energy_Eh", "HOMO_LUMO_Gap_eV", 
+             "Total_Dipole_Moment_Debye", "Pocket_Backbone_RMSD", "Ligand_RMSD_Pocket_Aligned", 
+             "Ligand_Self_Aligned_RMSD"),
+  Lower = c(0.8, 0.8, 0.8, -Inf, 0.05, 0, 0, 0, 0),
+  Upper = c(1.0, 1.0, 1.0, -300, 0.20, 100, 2.0, 2.0, 1.5),
+  Label = c("High Conf", "High Conf", "High Rank", "Stable Energy", "Drug-like Gap", 
+            "Stable Dipole", "Stable Pocket", "Stable Ligand", "Stable Alignment")
+)
+
+# Plot with shading for the "Optimum Range"
+ggplot(long_md_metrics, aes(x = method, y = Value, fill = method)) +
+  geom_boxplot(width = .25, outlier.shape = NA, alpha = 0.5) +
+  # Add shaded regions for the optimum range
+  geom_rect(data = thresholds, aes(xmin = -Inf, xmax = Inf, ymin = Lower, ymax = Upper), 
+            fill = "#8f5774", alpha = 0.4, inherit.aes = FALSE) +
+  facet_wrap(~Metric, scales = "free_y", ncol = 3) +
+  theme_classic() +
+  theme(axis.text.x = element_text(angle = 90),
+        legend.position = "none") +
+  labs(x = "",
+       y = "Value")
+
+
+
+
+#####################
+
+metrics_to_plot <- c('SMILES', 'test_dataset', 'method',"iPTM", "PTM", "Ranking_Score", "Total_SCF_Energy_Eh", 
+                     "HOMO_LUMO_Gap_eV", "Total_Dipole_Moment_Debye", "Pocket_Backbone_RMSD", 
+                     "Ligand_RMSD_Pocket_Aligned", "Ligand_Self_Aligned_RMSD")
+# 1. Classify molecules based on your criteria
+md_metrics = md_metrics %>%
+  dplyr::select(all_of(metrics_to_plot))
+md_metrics = na.omit(md_metrics)
+md_metrics_summary <- md_metrics %>%
+  mutate(
+    Pass_MD = (Ligand_RMSD_Pocket_Aligned < 2.0) & 
+              (HOMO_LUMO_Gap_eV >= 0.05) & (HOMO_LUMO_Gap_eV <= 0.2),
+    Status = ifelse(Pass_MD, "Pass", "Fail")
+  )
+
+# 2. Prepare data for plotting
+plot_data <- md_metrics_summary %>%
+  group_by(test_dataset, method, Status) %>%
+  summarise(Count = n(), .groups = 'drop')
+
+# 3. Create the Stacked Barplot
+supplementary_result5 = ggplot(plot_data, aes(x = method, y = Count, fill = Status)) +
+  geom_bar(stat = "identity", position = "fill") + # "fill" makes it proportional
+  facet_wrap(~test_dataset, nrow = 1) +
+  theme_classic() +
+  scale_fill_manual(values = c("Pass" = "#dac4d0", "Fail" = "#11302a")) +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
+  labs(
+    y = "Proportion",
+    x = "Generative Method")
+```
+
+### Downstream attrition
+
+```{r}
+#| label: fig-12
+ggplot(plot_data, aes(x = method, y = Count, fill = Status)) +
+  geom_bar(stat = "identity", position = "fill") + # "fill" makes it proportional
+  theme_classic(base_size = 13) +
+  scale_fill_manual(values = c("Pass" = "#dac4d0", "Fail" = "#11302a")) +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
+  labs(
+    y = "Proportion",
+    x = "Generative Method")
+
+# scatter plots 
+# 1. Define the "Left Corner" (Success Zone)
+md_metrics <- md_metrics %>%
+  mutate(In_Corner = (Ligand_RMSD_Pocket_Aligned < 2) & 
+           (HOMO_LUMO_Gap_eV >= 0.05) & (HOMO_LUMO_Gap_eV <= 0.2))
+
+md_metrics <- md_metrics %>%
+  mutate(test_dataset = case_when(
+    test_dataset == "cardiomyopathy" ~ "Cardiomyopathy",
+    test_dataset == "parkinsons" ~ "Parkinson's \nDisease",
+    test_dataset == "hcc" ~ "Hepatocellular \nCarcinoma",
+    test_dataset == "glaucoma_bulk" ~ "Glaucoma (Bulk)",
+    test_dataset == "glaucoma" ~ "Glaucoma",
+    TRUE ~ test_dataset # Keeps any other values unchanged as a fallback
+  ))
+
+
+```
+
+### HOMO-LUMO Gap vs Ligand RMSD (Pcoket Aligned)
+
+```{r}
+#| label: fig-13
+# 2. Plotting
+ggplot() +
+  # Background: All points, faded
+  geom_point(data = md_metrics, 
+             aes(x = Ligand_RMSD_Pocket_Aligned, y = HOMO_LUMO_Gap_eV), 
+             color = "grey90", size = 1) +
+  
+  # Foreground: Only corner points, colored by Ranking_Score, shaped by Method
+  geom_point(data = filter(md_metrics, In_Corner == TRUE), 
+             aes(x = Ligand_RMSD_Pocket_Aligned, y = HOMO_LUMO_Gap_eV, 
+                 color = Ranking_Score, shape = method), 
+             size = 3, stroke = 1.5) +
+  scale_shape_manual(values = 1:10) +
+  
+  # Add threshold lines
+  geom_vline(xintercept = 2.0, linetype = "dashed", color = "red", alpha = 0.5) +
+  geom_hline(yintercept = c(0.05, 0.2), linetype = "dashed", color = "blue", alpha = 0.5) +
+  
+  # Styling
+  scale_color_viridis_c(option = "plasma") +
+  facet_wrap(~test_dataset, nrow = 1) +
+  theme_classic() +
+  labs(
+    x = "Ligand RMSD (Pocket Aligned) (Å)",
+    y = "HOMO-LUMO Gap (eV)") + xlim(0,2) + ylim(0,0.5)
+
+
+
+# Select numeric columns and the 'method' column for coloring
+metrics_df <- df[, c("SA_Score", "QED", "Ring_Count", "Rotatable_Bonds", "Aromatic_Rings", "Ranking_Score", 
+                     "Ligand_RMSD_Pocket_Aligned", "HOMO_LUMO_Gap_eV", "Total_SCF_Energy_Eh")]
+
+colnames(metrics_df) =  rev(c(
+  "HOMO–LUMO Gap (eV)",
+  "Energy (Eh)",
+  "Ligand RMSD \n (Pocket Aligned)",
+  "Ranking Score",
+  "Aromatic Rings",
+  "Rotatable Bonds",
+  "Ring Count",
+  "QED",
+  "SA Score"
+))
+
+library(ggcorrplot)
+
+# 1. Calculate the correlation matrix
+# Use complete.obs to handle any potential missing values from MD failures
+cor_matrix <- cor(metrics_df, use = "complete.obs", method = "spearman")
+
+# 2. Create the heatmap
+
+```
+
+### Correlation
+
+```{r}
+#| label: fig-14
+ggcorrplot(cor_matrix, 
+           method = "square",       # Clean square tiles
+           type = "lower",          # Only show lower triangle for simplicity
+           lab = TRUE,              # Show correlation coefficients
+           lab_size = 3.5,
+           colors = c("#daeaf7", "#4fa5d8", "#0855b1", "#010e54", "#00022b"), # Red for negative, Blue for positive
+           outline.color = "white",
+           ggtheme = theme_minimal()) +
+  theme(axis.text.x = element_text(angle = 90, vjust = 1, hjust = 1),
+        panel.grid = element_blank())
+
+
+library(dplyr)
+library(ggplot2)
+
+
+# 1. Define the 'Pass' column first
+md_metrics <- md_metrics %>%
+  mutate(
+    Pass = (Ligand_RMSD_Pocket_Aligned < 2.0) & 
+      (HOMO_LUMO_Gap_eV >= 0.05) & (HOMO_LUMO_Gap_eV <= 0.2)
+  )
+
+# 1. Prepare Data: Filter to successes and calculate proportions
+plot_data <- md_metrics %>%
+  filter(Pass == TRUE) %>%
+  group_by(test_dataset, method) %>%
+  summarise(Count = n(), .groups = 'drop') %>%
+  group_by(test_dataset) %>%
+  mutate(Proportion = Count / sum(Count))
+
+# 2. Create Stacked Bar Plot
+```
+:::
+
+### Appendix: Supplementary information
+
+#### Validating the Disease Reversal Score
+
+```{r}
+#| label: fig-15
+# read the data 
+df = raw
+
+# plot_df remove where the reversal score df full is NA
+plot_df = df[!is.na(df$reversal_score_scaled)]
+
+ggplot(plot_df, aes(x = method, y = reversal_score_scaled)) +
+  geom_boxplot(outlier.shape = NA, width = 0.4, fill = 'lightyellow') +
+    geom_jitter(aes(color = confidence, shape = significant), 
+              width = 0.2, alpha = 0.8, size = 1.5) +
+    scale_shape_manual(
+    values = c("TRUE" = 2, "FALSE" = 20)
+  ) +
+    scale_color_manual(
+    values = c("high" = "#ae0001", "low" = "#377EB8") # 17 is solid triangle, 16 is solid circle
+  ) +
+    labs(
+    x = "Method",
+    y = "Full Reversal Score",
+    color = "Confidence",
+    shape = "Significance"
+  ) +
+  theme_classic() +
+  theme(
+    panel.grid.minor = element_blank(),
+    legend.position = "right",
+    axis.text.x = element_text(angle = 45, hjust = 1)
+  )
+
+# calculate the network degree and netwrok distance based on the target and disease genes 
+ppi_path <- "Theraflow/method_processing/data/full_human_ppi.rds"
+ppi <- readRDS(ppi_path)
+node_degrees <- igraph::degree(ppi) # degrees
+# Load and Process Disease Signatures
+lincs_meta <- fread("Theraflow/method_processing/data/LINCS/lincs_gene_meta.csv")
+# Helper function to process signature files
+process_lincs_signatures <- function(path) {
+  data <- fread(path)
+  colnames(data) <- as.character(data[1,])
+  data <- data[2, 2:ncol(data)] %>% t() %>% as.data.frame()
+  colnames(data) <- "z_score"
+  data$pr_gene_id <- rownames(data)
+  data <- data %>%
+    mutate(pr_gene_id = as.character(pr_gene_id),
+           z_score = as.numeric(as.character(z_score))) %>%
+    inner_join(
+      lincs_meta %>% mutate(pr_gene_id = as.character(pr_gene_id)), 
+      by = 'pr_gene_id'
+    ) %>%
+    dplyr::select(pr_gene_symbol, z_score) %>%
+    filter(!is.na(pr_gene_symbol))
+  signatures <- list(
+    up = data %>% filter(z_score > 0) %>% deframe(),
+    down = data %>% filter(z_score < 0) %>% deframe()
+  )
+  return(signatures)
+}
+# Load lincs1000 and smilesgen signatures
+getwd()
+lincs1000_1 <- process_lincs_signatures("Theraflow/method_processing/data/test_datasets/rest_methods/lincs1000_1.csv")
+lincs1000_2 <- process_lincs_signatures("Theraflow/method_processing/data/test_datasets/rest_methods/lincs1000_2.csv")
+glaucoma <- process_lincs_signatures("Theraflow/method_processing/data/test_datasets/rest_methods/glaucoma.csv")
+glaucoma_bulk = process_lincs_signatures("Theraflow/method_processing/data/test_datasets/rest_methods/glaucoma_bulk.csv")
+cardiomyopathy = process_lincs_signatures("Theraflow/method_processing/data/test_datasets/rest_methods/cardiomyopathy.csv")
+hcc = process_lincs_signatures("Theraflow/method_processing/data/test_datasets/rest_methods/hcc.csv")
+parkinsons = process_lincs_signatures("Theraflow/method_processing/data/test_datasets/rest_methods/parkinsons.csv")
+# Combine up and down genes for the signature lists
+disease_signatures <- list(
+  lincs1000_1 = intersect(c(names(lincs1000_1$up), names(lincs1000_1$down)), V(ppi)$name),
+  lincs1000_2 = intersect(c(names(lincs1000_2$up), names(lincs1000_2$down)), V(ppi)$name),
+  glaucoma = intersect(c(names(glaucoma$up), names(glaucoma$down)), V(ppi)$name),
+  glaucoma_bulk = intersect(c(names(glaucoma_bulk$up), names(glaucoma_bulk$down)), V(ppi)$name),
+  cardiomyopathy = intersect(c(names(cardiomyopathy$up), names(cardiomyopathy$down)), V(ppi)$name),
+  hcc = intersect(c(names(hcc$up), names(hcc$down)), V(ppi)$name),
+  parkinsons = intersect(c(names(parkinsons$up), names(parkinsons$down)), V(ppi)$name)
+)
+# read the targets df
+library(biomaRt)
+
+# biomart chembl to hgnc (target_compound column in plot_df)
+ensembl <- useEnsembl(biomart = "genes", dataset = "hsapiens_gene_ensembl", mirror = "useast")
+hgnc_lookup <- getBM(
+  attributes = c("chembl", "hgnc_symbol"),
+  filters    = "chembl",
+  values     = unique(plot_df$target_compound),
+  mart       = ensembl
+) %>%
+  filter(hgnc_symbol != "")
+
+target_map <- target_map %>%
+  left_join(hgnc_lookup, by = c("target_chembl_id" = "chembl"))
+
+# collapse to one row per compound (some compounds hit multiple targets)
+target_map_final <- target_map %>%
+  group_by(target_compound) %>%
+  summarise(hgnc_symbol = paste(unique(na.omit(hgnc_symbol)), collapse = ";"), .groups = "drop")
+
+# --- Join into plot_df ---
+plot_df <- plot_df %>%
+  left_join(target_map_final, by = "target_compound")
+
+drug_results <- plot_df %>%
+  dplyr::rename(
+    drug_id = SMILES,
+    target = hgnc_symbol,
+    score = reversal_score_scaled
+  )
+
+# processing 
+mapped_drugs <- unique(as.data.frame(drug_results)[, c("drug_id", "target", "test_dataset")]) # get only unique 
+mapped_drugs_long <- mapped_drugs %>%
+  separate_rows(target, sep = ",\\s*") %>%
+  filter(target != "" & !is.na(target)) %>%
+  filter(target %in% V(ppi)$name) # separate by hgnc symbol 
+
+drug_degrees <- mapped_drugs_long %>%
+  mutate(deg = node_degrees[target]) %>%
+  group_by(drug_id) %>%
+  summarize(network_degree = mean(deg, na.rm = TRUE), .groups = "drop") # get the mean network degree of the taget 
+
+# compute average shortest path distance to disease genes
+calculate_distance <- function(targets, test_ds) {
+  if (length(targets) == 0) return(NA)
+  # Determine which signature group to use based on the test_dataset
+  sig_name <- case_when(
+    test_ds == "glaucoma" ~ "glaucoma",
+    test_ds %in% c("lincs1000_2", "lincs1000_2_m") ~ "lincs1000_2",
+    test_ds %in% c("smilesgen_1", "smilesgen_1_m") ~ "smilesgen_1",
+    test_ds %in% c("lincs1000_1", "lincs1000_1_m") ~ "lincs1000_1",
+    TRUE ~ "lincs1000_1" # default fallback
+  )
+  dis_genes <- disease_signatures[[sig_name]] # get the correct signature 
+  if (is.null(dis_genes) || length(dis_genes) == 0) return(NA)
+  
+  dists <- igraph::distances(ppi, v = targets, to = dis_genes)   # Compute shortest paths between drug targets and disease genes
+  dists[is.infinite(dists)] <- NA
+  mean(dists, na.rm = TRUE)
+}
+
+# Calculate Drug network distance using mapped disease lists - get the drug disease and target_list in a df 
+unique_drugs <- mapped_drugs_long %>%
+  group_by(drug_id, test_dataset) %>%
+  summarize(targets = list(target), .groups = "drop")
+
+unique_drugs$network_distance <- sapply(seq_len(nrow(unique_drugs)), function(i) {
+  calculate_distance(unique_drugs$targets[[i]], unique_drugs$test_dataset[i])
+}) # applying the function here
+unique_drugs_df <- as.data.frame(unique_drugs) 
+
+drug_metrics <- unique_drugs %>%
+  as.data.frame() %>%
+  dplyr::select(drug_id, test_dataset, network_distance) %>%
+  left_join(drug_degrees, by = "drug_id") # network_degree safely maps to drug_id, Retain 'test_dataset' here so we know exactly WHICH distance belongs WHERE
+
+# Join back to final results matching BOTH the drug and the specific context it was tested in
+drug_results <- drug_results %>%
+  left_join(drug_metrics, by = c("drug_id", "test_dataset"))
+
+drug_results = drug_results %>% mutate(
+  activity = case_when(action %in% c('AGONIST') ~  'Activator',
+                       .default = 'Inhibitor')
+)
+# Now scatter plot with the x as disease reversal score and y as the network distance based on if activator or inbitor (not we consider most drugs as blockers that disrupt the protein activity or folding and not activators) and color by significance.
+
+p1 = ggplot(drug_results, aes(x = score, y = network_distance, color = significant, shape = activity)) +
+  geom_point(size = 2.5, alpha = 0.6) +
+  scale_color_manual(
+    values = c("TRUE" = "#ae0001", "FALSE" = "#0e1a40"),
+    name = "Significant"
+  ) +
+  labs(
+    x = "Disease Reversal Score",
+    y = "Network Distance"
+  ) +
+  theme_classic(base_size = 14) +
+  theme(
+    plot.title = element_text(face = "bold"),
+    legend.position = "right"
+  ) + xlim(-2,2)
+
+
+p2 = ggplot(drug_results, aes(x = significant, y = network_degree, fill = significant)) +
+  geom_violin(alpha = 0.4, outlier.shape = NA) +
+  geom_boxplot(width = 0.2, color = "black") +
+  scale_fill_manual(values = c("TRUE" = "#E41A1C", "FALSE" = "#377EB8")) +
+  labs(
+    x = "Significant Scores",
+    y = "Target Network Degree"
+  ) +
+  theme_classic(base_size = 14) +
+  theme(legend.position = "none")
+
+ggarrange(p1,p2)
+
+valid_reversal_results =  fread("scripts/disease_reversal_validation/reversal_dtsea_embl.csv")
+valid_reversal_results <- valid_reversal_results %>%
+  mutate(disease = case_when(
+    disease == "type_2_diabetes"       ~ "Type 2 Diabetes",
+    disease == "alzheimer_disease"       ~ "Alzheimer Disease",
+    disease == "breast_cancer"        ~ "Breast Cancer",
+    disease == "ovarian_cancer"    ~ "Ovarian Cancer",
+    disease == "glaucoma"       ~ "Glaucoma",
+    TRUE                    ~ disease # Keeps any unexpected values as-is
+  ))
+ggplot(valid_reversal_results, aes(x = disease, y = reversal_score)) +
+  geom_boxplot(fill = "lightyellow") +
+  geom_jitter(aes(color = drug_id), width = 0.2, size = 3) +
+  theme_classic(base_size = 13) +
+  labs(
+    x = "Disease",
+    y = "Reversal Score",
+    color = "Drug"
+  ) +
+  theme(
+    axis.text.x = element_text(angle = 45, hjust = 1),
+    legend.position = "bottom"
+  )
+```
+
+#### Covariance plots
+
+```{r}
+#| label: fig-16
+#| fig-width: 10
+#| fig-height: 10
+cov_diff_plot
+cov_all_plot
+```
+
+#### Downstream attrition
+
+```{r}
+#| fig-width: 10
+#| label: fig-17
+supplementary_result5
+```

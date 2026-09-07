@@ -1,26 +1,20 @@
 #!/usr/bin/env python3
 """
-TheraFlow Master Pipeline Orchestrator (End-to-End Wrapper)
-Sequentially runs all evaluation, property prediction, target profiling, 
-disease reversal, consensus ranking, and docking/QM stages:
-
-  Step 1: Generative Performance (Validity, Uniqueness, MOSES Novelty, Diversity)
-  Step 2: 2D Molecular Properties, Safety Alerts (PAINS/BRENK/NIH) & Reference Similarities
-  Step 3: InChIKey Deduplication, Lipinski/Complexity 3D ETKDGv3 Embedding & PoseBusters
-  Step 4: ChEMBL Target Prediction, IC50/EC50 Potency & Mechanism of Action Retrieval
-  Step 5: DTSEA Disease DEG Reversal Enrichment Analysis in R
-  Step 6: Master Merging, 11D Pareto Multi-Objective Optimization & Robust Rank Aggregation
-  Step 7: AlphaFold 3 Docking / QM Metric Extraction (Optional / If predictions exist)
-  Step 8: Multi-Tier Benchmarking & Figure Generation (FunkyHeatmap, Pareto Radar, PoseBusters Attrition)
-  Final : Merges all calculated metrics directly back into processed_data.csv
-
-Usage:
-  python TheraFlow/run_pipeline.py --input TheraFlow/method_processing/data/processed_data.csv
+TheraFlow Master Pipeline Orchestrator
+Executes the end-to-end evaluation and benchmarking suite across all tiers:
+  Step 1: Generative Performance (Validity, Novelty, Uniqueness, IntDiv)
+  Step 2: 2D Physicochemical Properties, Structural Alerts & Benchmark Filtering
+  Step 3: InChIKey Deduplication, 3D Conformation Embedding (ETKDGv3) & PoseBusters Suite
+  Step 4: ChEMBL Target Retrieval & Potency / Mechanism-of-Action Consensus Scoring
+  Step 5: DTSEA Transcriptomic Disease Reversal Scoring (R)
+  Step 6: AlphaFold 3 Docking & QM/MM Semi-empirical Metric Extraction
+  Step 7: Final Master Dataset Merge & Method Standardization (processed_data.csv)
+  Step 8: Multi-Tier Publication Benchmarking & Figure Generation (benchmark.R)
 """
 
 import os
 import sys
-import shutil
+import time
 import argparse
 import subprocess
 import pandas as pd
@@ -28,106 +22,75 @@ from pathlib import Path
 
 
 def log_header(title):
-    print("\n" + "=" * 70)
+    print("\n" + "=" * 80)
     print(f"  {title}")
-    print("=" * 70 + "\n")
+    print("=" * 80)
 
 
-def safe_merge(left_df, right_df, preferred_keys=None):
-    """Robust dataframe merge avoiding column name collisions and row multiplications."""
-    if right_df is None or len(right_df) == 0:
-        return left_df
-    if preferred_keys is None:
-        preferred_keys = ["SMILES", "method", "test_dataset"]
-    merge_keys = [k for k in preferred_keys if k in left_df.columns and k in right_df.columns]
-    if not merge_keys and "SMILES" in left_df.columns and "SMILES" in right_df.columns:
-        merge_keys = ["SMILES"]
-    if not merge_keys:
-        return left_df
-    cols_to_add = [c for c in right_df.columns if c not in left_df.columns or c in merge_keys]
-    right_dedup = right_df[cols_to_add].drop_duplicates(subset=merge_keys)
-    return left_df.merge(right_dedup, on=merge_keys, how="left")
+def run_command_stream(cmd, step_name):
+    print(f"\n[EXEC] {' '.join(cmd)}")
+    start_time = time.time()
+    process = subprocess.Popen(
+        cmd,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        universal_newlines=True,
+        bufsize=1
+    )
+    for line in iter(process.stdout.readline, ''):
+        print(f"[{step_name}] {line}", end='', flush=True)
+    process.stdout.close()
+    return_code = process.wait()
+    elapsed = time.time() - start_time
+    if return_code != 0:
+        print(f"\n[ERROR] Step '{step_name}' failed with return code {return_code} after {elapsed:.1f}s.")
+        raise RuntimeError(f"Step '{step_name}' failed!")
+    print(f"[DONE] Step '{step_name}' completed successfully in {elapsed:.1f}s.")
 
 
 def get_python_exe():
-    candidates = [
-        "/verona/nobackup/rojashrj/miniconda3/envs/smilesgen/bin/python",
-        sys.executable
-    ]
-    for cand in candidates:
-        if os.path.exists(cand):
-            return cand
     return sys.executable
-
-def run_command_stream(cmd, desc):
-    print(f"--> Running {desc}:\n    " + " ".join(cmd) + "\n")
-    res = subprocess.run(cmd)
-    if res.returncode != 0:
-        raise RuntimeError(f"Execution failed at stage: {desc} (exit code {res.returncode})")
 
 
 def main():
-    parser = argparse.ArgumentParser(
-        description="TheraFlow End-to-End Master Pipeline Wrapper"
-    )
+    parser = argparse.ArgumentParser(description="TheraFlow Master Benchmarking & Evaluation Pipeline Orchestrator.")
     parser.add_argument(
-        "--input",
-        type=str,
+        "--input", 
+        type=str, 
         default="TheraFlow/method_processing/data/processed_data.csv",
-        help="Path to raw candidate processed_data.csv."
+        help="Path to candidate molecules CSV dataset."
     )
     parser.add_argument(
-        "--output_dir",
-        type=str,
+        "--output_dir", 
+        type=str, 
         default="TheraFlow/outputs",
-        help="Directory to store intermediate and final metrics."
+        help="Directory to save pipeline outputs and intermediate files."
     )
     parser.add_argument(
-        "--output_merged",
-        type=str,
-        default="TheraFlow/method_processing/data/processed_data.csv",
-        help="Target path to save final merged dataset (defaults to updating processed_data.csv)."
+        "--steps", 
+        type=str, 
+        default="1,2,3,4,5,6,7,8",
+        help="Comma-separated list of steps to execute (1-8). Default: all."
     )
-    parser.add_argument(
-        "--backup",
-        action="store_true",
-        default=True,
-        help="Create a .backup.csv copy before overwriting input dataset."
-    )
-    parser.add_argument(
-        "--steps",
-        type=str,
-        default="1,2,3,4,5,6,8",
-        help="Comma-separated list of pipeline steps to run (e.g. 1,2,3,4,5,6,8 or 1,2,3,4,5,6,7,8)."
-    )
-    
-    # Execution options for sub-scripts
-    parser.add_argument("--n_jobs_3d", type=int, default=4, help="Workers for 3D embedding in Step 3.")
-    parser.add_argument("--chembl_workers", type=int, default=5, help="Workers for ChEMBL queries in Step 4.")
-    parser.add_argument("--r_workers", type=int, default=2, help="Parallel workers for DTSEA in Step 5.")
-    parser.add_argument("--top_n_consensus", type=int, default=10, help="Top candidates per group in Step 6.")
-    parser.add_argument("--run_af3", action="store_true", help="Launch AlphaFold 3 batch inference in Step 7.")
-    parser.add_argument("--extract_qm", action="store_true", help="Extract AF3 and QM metrics in Step 7.")
-    
+    parser.add_argument("--n_jobs_3d", type=int, default=4, help="Parallel workers for 3D ETKDGv3 embedding.")
+    parser.add_argument("--chembl_workers", type=int, default=5, help="Concurrent threads for ChEMBL API.")
+    parser.add_argument("--r_workers", type=int, default=7, help="Parallel R cores for DTSEA disease reversal.")
+    parser.add_argument("--top_n_consensus", type=int, default=1, help="Top candidates per group for docking.")
+    parser.add_argument("--run_af3", action="store_true", help="Launch AlphaFold 3 batch neural folding.")
+    parser.add_argument("--extract_qm", action="store_true", help="Extract docking confidence and QM metrics.")
     args = parser.parse_args()
-    
-    input_file = Path(args.input).resolve()
-    if not input_file.exists():
-        raise FileNotFoundError(f"Input candidate CSV not found at: {input_file}")
-        
-    out_dir = Path(args.output_dir).resolve()
+
+    active_steps = set(int(s.strip()) for s in args.steps.split(",") if s.strip().isdigit())
+    pipeline_dir = Path(__file__).resolve().parent
+    out_dir = Path(args.output_dir)
     os.makedirs(out_dir, exist_ok=True)
-    
-    pipeline_dir = Path(__file__).parent / "pipeline"
-    if not pipeline_dir.exists():
-        pipeline_dir = Path("TheraFlow/pipeline").resolve()
-        
-    active_steps = [int(s.strip()) for s in args.steps.split(",") if s.strip().isdigit()]
-    print(f"Initialised TheraFlow Master Pipeline with {len(active_steps)} active steps: {active_steps}")
-    print(f"Input Candidates: {input_file}")
-    print(f"Outputs Directory: {out_dir}")
-    
-    # Output file paths
+    input_file = Path(args.input)
+
+    print(f"Starting TheraFlow Pipeline Orchestrator on: {input_file.resolve()}")
+    print(f"Outputs will be stored in: {out_dir.resolve()}")
+    print(f"Active stages: {sorted(list(active_steps))}")
+
+    # Intermediate file definitions
     set_props_csv = out_dir / "set_properties.csv"
     mol_props_csv = out_dir / "molecular_properties_metrics.csv"
     mol_props_filtered_csv = out_dir / "molecular_properties_filtered.csv"
@@ -136,36 +99,36 @@ def main():
     chembl_targets_csv = out_dir / "chembl_targets.csv"
     potency_csv = out_dir / "potency_scores.csv"
     reversal_csv = out_dir / "reversal_res.csv"
-    master_merged_csv = out_dir / "merged_master_dataframe.csv"
     consensus_csv = out_dir / "consensus_top.csv"
     af3_batch_json = out_dir / "af3_batch_input.json"
     docking_qm_csv = out_dir / "docking_qm_metrics.csv"
-    
+    master_merged_csv = out_dir / "merged_master_dataframe.csv"
+
     # -------------------------------------------------------------------------
-    # STEP 1: Generative Performance Macro Metrics
+    # STEP 1: Generative Performance
     # -------------------------------------------------------------------------
     if 1 in active_steps:
-        log_header("Stage 1: Evaluating Generative Performance Macro-Metrics")
+        log_header("Stage 1: Calculating Generative Performance (Set Properties)")
         cmd = [
-            sys.executable, str(pipeline_dir / "1.generative_perf.py"),
+            get_python_exe(), str(pipeline_dir / "1.generative_perf.py"),
             "--input", str(input_file),
             "--output", str(set_props_csv)
         ]
         run_command_stream(cmd, "Step 1: Generative Performance")
-        
+
     # -------------------------------------------------------------------------
-    # STEP 2: 2D Molecular Properties & Safety Alerts
+    # STEP 2: Molecular Properties & Safety Alerts
     # -------------------------------------------------------------------------
     if 2 in active_steps:
-        log_header("Stage 2: Calculating 2D Properties, Safety Filters & Similarities")
+        log_header("Stage 2: Calculating 2D Physicochemical Properties & Safety Filtering")
         cmd = [
-            sys.executable, str(pipeline_dir / "2.molecular_properties.py"),
+            get_python_exe(), str(pipeline_dir / "2.molecular_properties.py"),
             "--input", str(input_file),
             "--output", str(mol_props_csv),
             "--output_filtered", str(mol_props_filtered_csv)
         ]
         run_command_stream(cmd, "Step 2: Molecular Properties")
-        
+
     # -------------------------------------------------------------------------
     # STEP 3: InChIKey Deduplication, 3D Embedding & PoseBusters
     # -------------------------------------------------------------------------
@@ -180,22 +143,22 @@ def main():
             "--n_jobs", str(args.n_jobs_3d)
         ]
         run_command_stream(cmd, "Step 3: PoseBusters & 3D Conformations")
-        
+
     # -------------------------------------------------------------------------
-    # STEP 4: ChEMBL Targets, Potency & Mechanism of Action
+    # STEP 4: ChEMBL Targets & Potency
     # -------------------------------------------------------------------------
     if 4 in active_steps:
         log_header("Stage 4: Querying ChEMBL for Targets & Potency (IC50/EC50)")
         in_step4 = mol_props_filtered_csv if mol_props_filtered_csv.exists() else (mol_props_csv if mol_props_csv.exists() else input_file)
         cmd = [
-            sys.executable, str(pipeline_dir / "4.potency_chembl.py"),
+            get_python_exe(), str(pipeline_dir / "4.potency_chembl.py"),
             "--input", str(in_step4),
             "--output_targets", str(chembl_targets_csv),
             "--output_potency", str(potency_csv),
             "--max_workers", str(args.chembl_workers)
         ]
         run_command_stream(cmd, "Step 4: ChEMBL Potency & Targets")
-        
+
     # -------------------------------------------------------------------------
     # STEP 5: DTSEA Disease Reversal Scoring
     # -------------------------------------------------------------------------
@@ -209,108 +172,63 @@ def main():
             "--workers", str(args.r_workers)
         ]
         run_command_stream(cmd, "Step 5: Disease Reversal")
-        
+
     # -------------------------------------------------------------------------
-    # STEP 6: Master Merging & Consensus Pareto / RRA Ranking
+    # STEP 6: AlphaFold 3 Docking & QM Execution / Metric Extraction
     # -------------------------------------------------------------------------
     if 6 in active_steps:
-        log_header("Stage 6: Merging Metrics & Running Pareto / RRA Consensus Ranking")
-        cmd = [
-            sys.executable, str(pipeline_dir / "6.merging.py"),
-            "--properties_csv", str(mol_props_csv if mol_props_csv.exists() else input_file),
+        log_header("Stage 6: AlphaFold 3 Docking & QM Metric Extraction")
+        cmd_6 = [sys.executable, str(pipeline_dir / "6.docking_md.py")]
+        if args.run_af3:
+            cmd_6.extend(["--run_af3", "--af3_json", str(af3_batch_json)])
+        if args.extract_qm or not args.run_af3:
+            cmd_6.extend([
+                "--extract_metrics",
+                "--output_metrics", str(docking_qm_csv)
+            ])
+        run_command_stream(cmd_6, "Step 6: Docking & QM Metrics")
+
+    # -------------------------------------------------------------------------
+    # STEP 7: Final Master Merge & Method Standardization
+    # -------------------------------------------------------------------------
+    if 7 in active_steps:
+        log_header("Stage 7: Final Master Dataset Merge & Method Standardization")
+        cmd_7 = [
+            sys.executable, str(pipeline_dir / "7.final_merge.py"),
+            "--base_csv", str(input_file),
+            "--properties_csv", str(mol_props_csv),
             "--posebusters_csv", str(posebusters_csv),
             "--targets_csv", str(chembl_targets_csv),
             "--potency_csv", str(potency_csv),
             "--reversal_csv", str(reversal_csv),
+            "--consensus_csv", str(consensus_csv),
+            "--docking_csv", str(docking_qm_csv),
             "--master_csv", str(master_merged_csv),
-            "--output_consensus", str(consensus_csv),
-            "--output_af3_json", str(af3_batch_json),
-            "--top_n", str(args.top_n_consensus)
+            "--output_processed_data", str(input_file)
         ]
-        run_command_stream(cmd, "Step 6: Master Merging & Consensus Ranking")
-        
-    # -------------------------------------------------------------------------
-    # STEP 7: AlphaFold 3 Docking & QM Execution / Metric Extraction (Optional)
-    # -------------------------------------------------------------------------
-    if 7 in active_steps or args.run_af3 or args.extract_qm:
-        log_header("Stage 7: AlphaFold 3 Docking & QM/MM Metric Extraction")
-        cmd_7 = [sys.executable, str(pipeline_dir / "7.docking_md_setup.py")]
-        if args.run_af3:
-            cmd_7.extend(["--run_af3", "--af3_json", str(af3_batch_json)])
-        if args.extract_qm or not args.run_af3:
-            cmd_7.extend([
-                "--extract_metrics",
-                "--output_metrics", str(docking_qm_csv)
-            ])
-        run_command_stream(cmd_7, "Step 7: Docking & QM Metrics")
-        
+        run_command_stream(cmd_7, "Step 7: Final Master Merge")
 
     # -------------------------------------------------------------------------
-    # STAGE 8: Multi-Tier Benchmarking & Figure Generation (benchmark.R)
+    # STEP 8: Multi-Tier Benchmarking & Figure Generation (benchmark.R)
     # -------------------------------------------------------------------------
     if 8 in active_steps:
-        log_header("Stage 8: Multi-Tier Benchmarking & Comprehensive Visualizations")
+        log_header("Stage 8: Multi-Tier Benchmarking & Figure Generation in R")
+        figures_dir = out_dir / "figures"
+        os.makedirs(figures_dir, exist_ok=True)
         cmd_8 = [
             "Rscript", str(pipeline_dir / "benchmark.R"),
             "--master_csv", str(master_merged_csv),
-            "--set_properties_csv", str(set_properties_csv),
+            "--set_properties_csv", str(set_props_csv),
             "--consensus_top_csv", str(consensus_csv),
-            "--potency_scores_csv", str(potency_scores_csv),
+            "--potency_scores_csv", str(potency_csv),
             "--reversal_res_csv", str(reversal_csv),
             "--docking_qm_metrics_csv", str(docking_qm_csv),
-            "--figures_dir", str(out_dir / "figures")
+            "--architecture_csv", "TheraFlow/method_processing/data/architecture_complexity.csv",
+            "--figures_dir", str(figures_dir)
         ]
-        run_command_stream(cmd_8, "Step 8: Benchmark Visualizations")
+        run_command_stream(cmd_8, "Step 8: Benchmarking & Figures")
 
-    # -------------------------------------------------------------------------
-    # FINAL: Merge All Calculated Results Back into processed_data.csv
-    # -------------------------------------------------------------------------
-    log_header("Final Aggregation: Merging Annotated Metrics into Input Dataset")
-    
-    base_df = pd.read_csv(input_file)
-    print(f"Loaded original candidates table ({len(base_df)} rows) from: {input_file}")
-    
-    if master_merged_csv.exists():
-        print(f"Merging master metric layers from {master_merged_csv}...")
-        master_df = pd.read_csv(master_merged_csv)
-        final_df = safe_merge(base_df, master_df)
-    else:
-        final_df = base_df.copy()
-        
-    if consensus_csv.exists():
-        print(f"Annotating top consensus ranked candidates from {consensus_csv}...")
-        cons_df = pd.read_csv(consensus_csv)
-        if "SMILES" in cons_df.columns:
-            m_col = "method" if "method" in cons_df.columns else "Method"
-            cons_keys = set(zip(cons_df["SMILES"], cons_df.get(m_col, ""), cons_df.get("test_dataset", "")))
-            final_df["is_top_consensus"] = [
-                (s, m, d) in cons_keys for s, m, d in zip(final_df["SMILES"], final_df.get("method", ""), final_df.get("test_dataset", ""))
-            ]
-            
-    if docking_qm_csv.exists() and docking_qm_csv.stat().st_size > 0:
-        print(f"Merging docking and QM descriptors from {docking_qm_csv}...")
-        try:
-            dqm_df = pd.read_csv(docking_qm_csv)
-            if len(dqm_df) > 0:
-                final_df = safe_merge(final_df, dqm_df, preferred_keys=["SMILES", "test_dataset"])
-        except Exception as e:
-            print(f"Warning: Could not merge docking QM CSV: {e}")
-        
-    target_out_path = Path(args.output_merged).resolve()
-    
-    if args.backup and target_out_path.exists():
-        backup_path = target_out_path.with_name(f"{target_out_path.stem}.backup{target_out_path.suffix}")
-        shutil.copy2(target_out_path, backup_path)
-        print(f"Created backup of original dataset at: {backup_path}")
-        
-    os.makedirs(target_out_path.parent, exist_ok=True)
-    final_df.to_csv(target_out_path, index=False)
-    
-    print(f"\n{"=" * 70}")
-    print(f"SUCCESS: TheraFlow Pipeline Execution & Merging Complete!")
-    print(f"Final fully annotated dataset ({len(final_df)} rows, {len(final_df.columns)} columns) saved to:")
-    print(f"  --> {target_out_path}")
-    print(f"{"=" * 70}\n")
+    log_header("TheraFlow Pipeline Execution Finished Successfully!")
 
 
 if __name__ == "__main__":
