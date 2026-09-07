@@ -1,10 +1,10 @@
-<p align="center">
+<p align="right">
   <img src="Figures/theraflow_hex.png" width="180" alt="TheraFlow Hex Logo">
 </p>
 
 # TheraFlow: A Multi-Stage Framework for Evaluating Generative Drug Models from Transcriptomics and Prioritizing Candidates
 
-[![Pipeline](https://img.shields.io/badge/Pipeline-7_Stages-blue.svg)](#-pipeline-architecture)
+[![Pipeline](https://img.shields.io/badge/Pipeline-6_Stages-blue.svg)](#-pipeline-architecture)
 [![Generative Models](https://img.shields.io/badge/Generative_Models-10_Supported-green.svg)](#-benchmark-generative-models--datasets)
 [![Disease Signatures](https://img.shields.io/badge/Disease_Signatures-7_Datasets-orange.svg)](#-benchmark-generative-models--datasets)
 [![Figure 2a](https://img.shields.io/badge/Figure_2a-Vector_PDF-purple.svg)](Figures/Figure2a.pdf)
@@ -12,9 +12,6 @@
 **TheraFlow** is an end-to-end, modular, and parallelized benchmarking and prioritization framework designed to evaluate deep generative models for transcriptomics-driven drug discovery. It bridges the gap between de novo molecular generation from disease differential gene expression signatures and downstream clinical / biophysical prioritization.
 
 ---
-
-## 🏗️ Framework Architecture & Multi-Tier Prioritization
-
 <p align="center">
   <img src="Figures/Figure2a.png" width="95%" alt="TheraFlow Framework Architecture">
 </p>
