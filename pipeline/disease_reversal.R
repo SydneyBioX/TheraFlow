@@ -207,10 +207,19 @@ all_dataset_results <- all_dataset_results[!sapply(all_dataset_results, is.null)
 
 if (length(all_dataset_results) > 0) {
   reversal_merged <- bind_rows(all_dataset_results)
-  mapping_df <- df_clean %>% select(SMILES, method, test_dataset, method_dataset) %>% distinct()
-  final_df <- mapping_df %>% inner_join(reversal_merged, by = c("SMILES", "test_dataset"))
+  targets_info <- targets_df %>% 
+    select(any_of(c("SMILES", "Predicted_Targets", "ChEMBL_Neighbors"))) %>% 
+    distinct()
+  
+  mapping_df <- df_clean %>% 
+    select(SMILES, method, test_dataset, method_dataset) %>% 
+    distinct() %>% 
+    left_join(targets_info, by = "SMILES")
+    
+  final_df <- mapping_df %>% 
+    inner_join(reversal_merged, by = c("SMILES", "test_dataset"))
 } else {
-  final_df <- data.frame(method_dataset = character(), method = character(), test_dataset = character(), SMILES = character(), reversal_score = numeric(), nes_up = numeric(), nes_down = numeric(), up_padj = numeric(), down_padj = numeric())
+  final_df <- data.frame(method_dataset = character(), method = character(), test_dataset = character(), SMILES = character(), Predicted_Targets = character(), reversal_score = numeric(), nes_up = numeric(), nes_down = numeric(), up_padj = numeric(), down_padj = numeric())
 }
 
 if (file.exists(opt$potency_csv)) {

@@ -81,7 +81,7 @@ def main():
     args = parser.parse_args()
 
     active_steps = set(int(s.strip()) for s in args.steps.split(",") if s.strip().isdigit())
-    pipeline_dir = Path(__file__).resolve().parent
+    pipeline_dir = Path(__file__).resolve().parent / "pipeline" if (Path(__file__).resolve().parent / "pipeline" / "1.generative_perf.py").exists() else Path(__file__).resolve().parent
     out_dir = Path(args.output_dir)
     os.makedirs(out_dir, exist_ok=True)
     input_file = Path(args.input)

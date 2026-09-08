@@ -14,7 +14,7 @@ format:
     code-fold: true
     embed-resources: true
 editor_options: 
-  chunk_output_type: console
+  chunk_output_type: inline
 execute:
   dir: file
   echo: false
@@ -62,8 +62,8 @@ import matplotlib.pyplot as plt
 import matplotlib.patches as mpatches
 
 # Paths for data and figures
-metrics_path = 'Theraflow/method_processing/metrics.csv' if os.path.exists('data/metrics.csv') else '../data/metrics.csv'
-eval_path = 'Theraflow/method_processing/evaluation.csv' if os.path.exists('data/evaluation.csv') else '../data/evaluation.csv'
+metrics_path = 'method_processing/data/metrics.csv' 
+eval_path = 'method_processing/data/evaluation.csv' 
 
 model_cols = [
     'Gex2SGen',
@@ -199,7 +199,7 @@ TheraFlow integrates more than 70 complementary evaluation metrics spanning mode
 #| fig-width: 15
 #| label: fig-1
 
-df = fread("Theraflow/outputs/merged_master_dataframe.csv")
+df = fread("outputs/merged_master_dataframe.csv")
 
 columns = c("SMILES", "method", "QED", "SA_Score", "MW", "LogP", "HBA", "HBD", "Passes_Safety", "Sim_Morg_Tani", "internal_energy", "internal_steric_clash", "aromatic_ring_flatness", "non-aromatic_ring_non-flatness", "number_short_outlier_bonds", "number_long_outlier_bonds", "most_extreme_relative_angle", "reversal_score_scaled")
 df = df %>%
@@ -215,7 +215,7 @@ df = df %>%
   })) %>%
   ungroup()
 
-gen_metrics = fread("Theraflow/outputs/set_properties.csv") # note the change 
+gen_metrics = fread("outputs/set_properties.csv") # note the change 
 gen_metrics <- gen_metrics %>%
   mutate(method = case_when(
     method == "biaee"       ~ "BiAAE",
@@ -420,7 +420,7 @@ plot
 #| label: fig-2
 #| fig-width: 10
 
-raw = fread("Theraflow/outputs/merged_master_dataframe.csv")
+raw = fread("outputs/merged_master_dataframe.csv")
 data = raw
 external_totals = data %>%
   group_by(method) %>%
@@ -1059,7 +1059,7 @@ df <- df %>%
   )
 
 # Sanitization 
-meta  <- fread("Theraflow/method_processing/data/metrics_metadata.csv")
+meta  <- fread("method_processing/data/metrics_metadata.csv")
 selected_metrics = meta[Classification == "Chemical validity",]$Metric 
 
 df <- df %>%
@@ -1522,7 +1522,7 @@ individual_metrics <- c(
   "reversal_score_scaled", "norm_similarity"
 )
 
-architecture_complexity <- read_csv("Theraflow/method_processing/data/architecture_complexity.csv")
+architecture_complexity <- read_csv("method_processing/data/architecture_complexity.csv")
 architecture_complexity <- architecture_complexity %>%
   mutate(method = case_when(
     method == "biaee"       ~ "BiAAE",
@@ -1969,11 +1969,11 @@ ggplot(plot_df, aes(x = method, y = reversal_score_scaled)) +
   )
 
 # calculate the network degree and netwrok distance based on the target and disease genes 
-ppi_path <- "Theraflow/method_processing/data/full_human_ppi.rds"
+ppi_path <- "method_processing/data/full_human_ppi.rds"
 ppi <- readRDS(ppi_path)
 node_degrees <- igraph::degree(ppi) # degrees
 # Load and Process Disease Signatures
-lincs_meta <- fread("Theraflow/method_processing/data/LINCS/lincs_gene_meta.csv")
+lincs_meta <- fread("method_processing/data/LINCS/lincs_gene_meta.csv")
 # Helper function to process signature files
 process_lincs_signatures <- function(path) {
   data <- fread(path)
@@ -1998,13 +1998,13 @@ process_lincs_signatures <- function(path) {
 }
 # Load lincs1000 and smilesgen signatures
 getwd()
-lincs1000_1 <- process_lincs_signatures("Theraflow/method_processing/data/test_datasets/rest_methods/lincs1000_1.csv")
-lincs1000_2 <- process_lincs_signatures("Theraflow/method_processing/data/test_datasets/rest_methods/lincs1000_2.csv")
-glaucoma <- process_lincs_signatures("Theraflow/method_processing/data/test_datasets/rest_methods/glaucoma.csv")
-glaucoma_bulk = process_lincs_signatures("Theraflow/method_processing/data/test_datasets/rest_methods/glaucoma_bulk.csv")
-cardiomyopathy = process_lincs_signatures("Theraflow/method_processing/data/test_datasets/rest_methods/cardiomyopathy.csv")
-hcc = process_lincs_signatures("Theraflow/method_processing/data/test_datasets/rest_methods/hcc.csv")
-parkinsons = process_lincs_signatures("Theraflow/method_processing/data/test_datasets/rest_methods/parkinsons.csv")
+lincs1000_1 <- process_lincs_signatures("method_processing/data/test_datasets/rest_methods/lincs1000_1.csv")
+lincs1000_2 <- process_lincs_signatures("method_processing/data/test_datasets/rest_methods/lincs1000_2.csv")
+glaucoma <- process_lincs_signatures("method_processing/data/test_datasets/rest_methods/glaucoma.csv")
+glaucoma_bulk = process_lincs_signatures("method_processing/data/test_datasets/rest_methods/glaucoma_bulk.csv")
+cardiomyopathy = process_lincs_signatures("method_processing/data/test_datasets/rest_methods/cardiomyopathy.csv")
+hcc = process_lincs_signatures("method_processing/data/test_datasets/rest_methods/hcc.csv")
+parkinsons = process_lincs_signatures("method_processing/data/test_datasets/rest_methods/parkinsons.csv")
 # Combine up and down genes for the signature lists
 disease_signatures <- list(
   lincs1000_1 = intersect(c(names(lincs1000_1$up), names(lincs1000_1$down)), V(ppi)$name),
@@ -2016,34 +2016,16 @@ disease_signatures <- list(
   parkinsons = intersect(c(names(parkinsons$up), names(parkinsons$down)), V(ppi)$name)
 )
 # read the targets df
-library(biomaRt)
 
-# biomart chembl to hgnc (target_compound column in plot_df)
-ensembl <- useEnsembl(biomart = "genes", dataset = "hsapiens_gene_ensembl", mirror = "useast")
-hgnc_lookup <- getBM(
-  attributes = c("chembl", "hgnc_symbol"),
-  filters    = "chembl",
-  values     = unique(plot_df$target_compound),
-  mart       = ensembl
-) %>%
-  filter(hgnc_symbol != "")
-
-target_map <- target_map %>%
-  left_join(hgnc_lookup, by = c("target_chembl_id" = "chembl"))
-
-# collapse to one row per compound (some compounds hit multiple targets)
-target_map_final <- target_map %>%
-  group_by(target_compound) %>%
-  summarise(hgnc_symbol = paste(unique(na.omit(hgnc_symbol)), collapse = ";"), .groups = "drop")
-
-# --- Join into plot_df ---
 plot_df <- plot_df %>%
-  left_join(target_map_final, by = "target_compound")
+  separate_longer_delim(Predicted_Targets, delim = ", ") %>%
+  mutate(target = trimws(Predicted_Targets)) %>%
+  filter(!is.na(target) & !target %in% c("None", "")) 
+
 
 drug_results <- plot_df %>%
   dplyr::rename(
     drug_id = SMILES,
-    target = hgnc_symbol,
     score = reversal_score_scaled
   )
 
@@ -2101,6 +2083,7 @@ drug_results = drug_results %>% mutate(
   activity = case_when(action %in% c('AGONIST') ~  'Activator',
                        .default = 'Inhibitor')
 )
+
 # Now scatter plot with the x as disease reversal score and y as the network distance based on if activator or inbitor (not we consider most drugs as blockers that disrupt the protein activity or folding and not activators) and color by significance.
 
 p1 = ggplot(drug_results, aes(x = score, y = network_distance, color = significant, shape = activity)) +
@@ -2133,7 +2116,7 @@ p2 = ggplot(drug_results, aes(x = significant, y = network_degree, fill = signif
 
 ggarrange(p1,p2)
 
-valid_reversal_results =  fread("scripts/disease_reversal_validation/reversal_dtsea_embl.csv")
+valid_reversal_results =  fread("method_processing/data/reversal_dtsea_embl.csv")
 valid_reversal_results <- valid_reversal_results %>%
   mutate(disease = case_when(
     disease == "type_2_diabetes"       ~ "Type 2 Diabetes",

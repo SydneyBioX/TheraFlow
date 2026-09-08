@@ -26,7 +26,7 @@ METHOD_NAME_MAPPING = {
     "smilesgen": "SmilesGEN",
     "smilesgen (vae)": "SmilesGEN",
     "transgem": "TransGEM",
-    "triomphe": "Triomphe",
+    "triomphe": "TRIOMPHE",
 }
 
 def get_canonical_smiles(s):

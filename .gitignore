@@ -26,3 +26,10 @@ data/
 TheraFlow/method_processing/data/
 method_processing/outputs/
 /outputs
+benchmarking_anal_cache/
+benchmarking_anal_files/
+benchmarking_analysis_cache/
+benchmarking_analysis_files/
+method_processing/outputs_new/
+outputs_new/
+test_import.py

@@ -371,7 +371,7 @@ def parse_wbo_min(wbo_path, ligand_indices, pocket_indices):
 
 
 def extract_docking_and_qm_metrics(
-    af3_dir="TheraFlow/outputs/af3_predictions",
+    af3_dir="alphafold3/output_result5",
     qm_dir="TheraFlow/outputs/docking_md_runs",
     input_json_path="TheraFlow/outputs/af3_batch_input.json",
     output_csv="TheraFlow/outputs/docking_qm_metrics.csv"
@@ -383,8 +383,11 @@ def extract_docking_and_qm_metrics(
     iPTM, PTM, Pocket_Backbone_RMSD, Ligand_Self_Aligned_RMSD, Min_WBO,
     mean_protein_plddt, mean_ligand_plddt, SMILES, test_dataset.
     """
-    af3_path = Path(af3_dir).resolve()
-    qm_path = Path(qm_dir).resolve()
+    af3_candidates = [Path(af3_dir), Path("alphafold3/output_result5"), Path("../alphafold3/output_result5"), Path("TheraFlow/outputs/af3_predictions")]
+    af3_path = next((p.resolve() for p in af3_candidates if p.exists()), Path(af3_dir).resolve())
+
+    qm_candidates = [Path(qm_dir), Path("TheraFlow/outputs/docking_md_runs"), Path("TheraFlow/outputs_new/docking_md_runs"), Path("outputs/docking_md_runs")]
+    qm_path = next((p.resolve() for p in qm_candidates if p.exists()), Path(qm_dir).resolve())
     
     job_meta_map = {}
     input_json = Path(input_json_path)
@@ -524,7 +527,23 @@ def extract_docking_and_qm_metrics(
             except Exception as e:
                 pass
                 
-        smiles_val = job_meta_map.get(job_name, "Unknown")
+        smiles_val = None
+        for cand in [td / f"{raw_name}_data.json", td / f"{job_name}_data.json", af3_path / job_name / f"{job_name}_data.json"]:
+            if cand.exists():
+                try:
+                    with open(cand, "r") as dj:
+                        dj_data = json.load(dj)
+                    for s in dj_data.get("sequences", []):
+                        if "ligand" in s:
+                            smiles_val = s["ligand"].get("smiles")
+                            break
+                except Exception:
+                    pass
+            if smiles_val:
+                break
+        
+        if not smiles_val:
+            smiles_val = job_meta_map.get(raw_name, job_meta_map.get(job_name, "Unknown"))
         
         records.append({
             "Directory": raw_name,
