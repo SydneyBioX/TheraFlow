@@ -33,3 +33,6 @@ benchmarking_analysis_files/
 method_processing/outputs_new/
 outputs_new/
 test_import.py
+
+Report_cache
+Report_files
