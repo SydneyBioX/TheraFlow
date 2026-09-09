@@ -209,7 +209,7 @@ ui <- page_navbar(
     class = "d-flex align-items-center gap-2",
     tags$span(style = "font-size: 1.4rem; font-weight: 800; color: #38bdf8;", "TheraFlow"),
     tags$span(style = "font-size: 0.85rem; background: #1e293b; color: #94a3b8; padding: 2px 8px; border-radius: 6px; border: 1px solid #334155;", "Benchmark v1.0"),
-    tags$span(style = "font-size: 0.85rem; color: #64748b; margin-left: 8px;", "Multi-Stage Transcriptomics Molecular Generation")
+    tags$span(style = "font-size: 0.85rem; color: #64748b; margin-left: 8px;", "A Multi-Stage Framework for evaluating generative drug models from transcriptomics and prioritizing candidates")
   ),
   
   # Inject Custom CSS
@@ -348,7 +348,7 @@ ui <- page_navbar(
         card_header(
           div(
             class = "d-flex justify-content-between align-items-center",
-            tags$span("TheraFlow Staged Evaluation Framework (Figure 2a Hierarchy)"),
+            tags$span("TheraFlow Staged Evaluation Framework"),
             tags$span(class = "badge bg-primary", "5-Tier Pipeline Architecture")
           )
         ),
@@ -389,7 +389,7 @@ ui <- page_navbar(
         card_header(
           div(
             class = "d-flex justify-content-between align-items-center flex-wrap gap-2",
-            tags$span("Figure 1: Comprehensive Multi-Stage Benchmark Funky Heatmap"),
+            tags$span("Comprehensive Multi-Stage Benchmark Funky Heatmap"),
             div(
               class = "d-flex align-items-center gap-2",
               tags$label(class = "text-muted small mb-0", "Sort Rows:"),
@@ -444,17 +444,28 @@ ui <- page_navbar(
       div(
         class = "col-lg-6",
         card(
-          card_header("Figure 2: Pipeline Cumulative Retention Rate Across Stages (%)"),
+          card_header("Pipeline Cumulative Retention Rate Across Stages (%)"),
           card_body(plotlyOutput("plot_fig2_attrition", height = "400px"))
         )
       ),
       
-      # Fig 4 & 5: 2D Drug-like vs 3D PoseBusters Scatter
+      # Fig 4 & 5: Multi-Baseline Physicochemical Retention (Figure 6 in Report.qmd)
       div(
         class = "col-lg-6",
         card(
-          card_header("Figures 4 & 5: Structural 3D Quality vs. 2D Drug-Likeness Pass Rates"),
-          card_body(plotlyOutput("plot_fig4_scatter", height = "400px"))
+          card_header(
+            div(
+              class = "d-flex justify-content-between align-items-center flex-wrap gap-2",
+              tags$span(tags$b("Structural 3D Quality vs. 2D Drug-Likeness Pass Rates Across Stages")),
+              tags$small(style = "color: #94a3b8;", "Total, Syntax-Valid & Med-Chem Baselines")
+            )
+          ),
+          card_body(
+            div(
+              style = "background: #111827; border-radius: 8px; padding: 4px;",
+              plotlyOutput("plot_fig4_scatter", height = "420px")
+            )
+          )
         )
       ),
       
@@ -462,7 +473,7 @@ ui <- page_navbar(
       div(
         class = "col-lg-6",
         card(
-          card_header("Figure 6: Multi-Gate Drug-Like Property Retention Funnel"),
+          card_header("Multi-Gate Drug-Like Property Retention Funnel"),
           card_body(plotlyOutput("plot_fig6_funnel", height = "420px"))
         )
       ),
@@ -471,7 +482,7 @@ ui <- page_navbar(
       div(
         class = "col-lg-6",
         card(
-          card_header("Figure 7: 3D PoseBusters Conformation Geometric Checks"),
+          card_header("3D PoseBusters Conformation Geometric Checks"),
           card_body(plotlyOutput("plot_fig7_posebusters", height = "420px"))
         )
       )
@@ -534,9 +545,9 @@ ui <- page_navbar(
                   "cov_mode_select",
                   label = NULL,
                   choices = c(
-                    "Top Molecules (Fig 11)" = "top",
-                    "All Molecules (Fig 20)" = "all",
-                    "Covariance Diff (Fig 21)" = "diff"
+                    "Top Molecules" = "top",
+                    "All Molecules" = "all",
+                    "Covariance Diff" = "diff"
                   ),
                   selected = "top",
                   inline = TRUE
@@ -568,7 +579,7 @@ ui <- page_navbar(
       div(
         class = "col-lg-7",
         card(
-          card_header("Figure 15: Transcriptomics Disease Reversal Score (DRS) Distribution"),
+          card_header("Transcriptomics Disease Reversal Score (DRS) Distribution"),
           card_body(plotlyOutput("plot_fig15_drs", height = "450px"))
         )
       ),
@@ -600,7 +611,7 @@ ui <- page_navbar(
           card_header(
             div(
               class = "d-flex justify-content-between align-items-center",
-              tags$span("Figure 11: AlphaFold3 & Quantum Property Distributions"),
+              tags$span("AlphaFold3 & Quantum Property Distributions"),
               selectInput(
                 "md_metric_select",
                 label = NULL,
@@ -625,7 +636,7 @@ ui <- page_navbar(
       div(
         class = "col-lg-6",
         card(
-          card_header("Figure 13: HOMO-LUMO Gap vs Ligand RMSD (Pocket Aligned) Success Zone"),
+          card_header("HOMO-LUMO Gap vs Ligand RMSD (Pocket Aligned) Success Zone"),
           card_body(plotlyOutput("plot_fig13_success_zone", height = "420px"))
         )
       ),
@@ -634,7 +645,7 @@ ui <- page_navbar(
       div(
         class = "col-lg-6",
         card(
-          card_header("Figure 12: Downstream Biophysical Success Zone Proportions"),
+          card_header("Downstream Biophysical Success Zone Proportions"),
           card_body(plotlyOutput("plot_fig12_success_rate", height = "380px"))
         )
       ),
@@ -643,7 +654,7 @@ ui <- page_navbar(
       div(
         class = "col-lg-6",
         card(
-          card_header("Figure 14: Quantum & MD Property Correlation Matrix"),
+          card_header("Quantum & MD Property Correlation Matrix"),
           card_body(plotlyOutput("plot_fig14_md_correlation", height = "380px"))
         )
       )
@@ -929,51 +940,137 @@ server <- function(input, output, session) {
     return(p)
   })
   
-  # Figure 4 & 5: Structural vs Drug-Like Scatter Plot
+  # Figure 4 & 5: Structural 3D Quality vs. 2D Drug-Likeness Pass Rates (Report.qmd lines 710-745)
   output$plot_fig4_scatter <- renderPlotly({
-    df <- filtered_data()
-    if (nrow(df) == 0) return(plotly_empty())
+    raw <- filtered_data()
+    if (nrow(raw) == 0) return(plotly_empty())
     
-    scatter_agg <- df %>%
-      group_by(method, dataset_display) %>%
+    external_totals <- raw %>%
+      group_by(method) %>%
+      summarise(Total_Gen = n(), .groups = "drop")
+    
+    drug_like_analysis <- raw %>%
+      group_by(method) %>%
       summarise(
-        Count = n(),
-        DrugLike_Pass = mean(stage2_druglike, na.rm = TRUE) * 100,
-        PoseBusters_Pass = mean(stage2_posebusters, na.rm = TRUE) * 100,
+        Stage1_Valid = sum(!is.na(QED)),
+        Stage2_Valid = sum((MW < 500) & (LogP < 5) & (HBA <= 10) & (HBD <= 5), na.rm = TRUE),
+        Count_druglike = sum((QED > 0.5) & (SA_Score < 4.5) & (MW < 500) & (LogP < 5) & (HBA <= 10) & (HBD <= 5), na.rm = TRUE),
         .groups = "drop"
+      ) %>%
+      pivot_longer(
+        cols = starts_with("Count_"),
+        names_to = "Metric",
+        values_to = "Passed_Count"
+      ) %>%
+      left_join(external_totals, by = "method") %>%
+      mutate(
+        Metric = gsub("Count_", "", Metric),
+        Pass_Rate_Total  = (Passed_Count / Total_Gen) * 100,
+        Pass_Rate_Stage1 = (Passed_Count / Stage1_Valid) * 100,
+        Pass_Rate_Stage2 = (Passed_Count / Stage2_Valid) * 100
       )
     
-    p <- plot_ly(
-      data = scatter_agg,
-      x = ~DrugLike_Pass,
-      y = ~PoseBusters_Pass,
-      color = ~method,
-      colors = method_colors,
-      size = ~Count,
-      sizes = c(10, 30),
-      type = "scatter",
-      mode = "markers",
-      hoverinfo = "text",
-      text = ~paste0(
-        "<b>Method:</b> ", method, "<br>",
-        "<b>Dataset:</b> ", dataset_display, "<br>",
-        "<b>Sample Count:</b> ", Count, "<br>",
-        "<b>2D Drug-Likeness Pass:</b> ", sprintf("%.1f%%", DrugLike_Pass), "<br>",
-        "<b>3D PoseBusters Pass:</b> ", sprintf("%.1f%%", PoseBusters_Pass)
+    posebusters_analysis <- raw %>%
+      mutate(
+        pass_Basic_Chem = sanitization & all_atoms_connected & passes_valence_checks & passes_kekulization,
+        pass_Geometry   = bond_lengths & bond_angles & (number_clashes == 0),
+        pass_Planarity  = aromatic_ring_flatness & double_bond_flatness,
+        pass_PoseBusters_Total = pass_Basic_Chem & pass_Geometry & pass_Planarity
+      ) %>%
+      group_by(method) %>%
+      summarise(
+        Stage1_Valid = sum(!is.na(QED)),
+        Stage2_Valid = sum((MW < 500) & (LogP < 5) & (HBA <= 10) & (HBD <= 5), na.rm = TRUE),
+        Passed_Count   = sum(pass_PoseBusters_Total == TRUE, na.rm = TRUE),
+        .groups = "drop"
+      ) %>%
+      left_join(external_totals, by = "method") %>%
+      mutate(
+        Pass_Rate_Total  = (Passed_Count / Total_Gen) * 100,
+        Pass_Rate_Stage1 = (Passed_Count / Stage1_Valid) * 100,
+        Pass_Rate_Stage2 = (Passed_Count / Stage2_Valid) * 100
       )
-    ) %>%
-      layout(
-        paper_bgcolor = "#111827",
-        plot_bgcolor = "#111827",
-        font = list(color = "#f8fafc"),
-        xaxis = list(title = "Stage 2A: 2D Drug-Likeness Pass Rate (%)", gridcolor = "#1f2937"),
-        yaxis = list(title = "Stage 2B: 3D PoseBusters Pass Rate (%)", gridcolor = "#1f2937"),
-        shapes = list(
-          list(type = "line", x0 = 50, x1 = 50, y0 = 0, y1 = 100, line = list(color = "#475569", dash = "dash")),
-          list(type = "line", x0 = 0, x1 = 100, y0 = 50, y1 = 50, line = list(color = "#475569", dash = "dash"))
+    
+    combined <- drug_like_analysis %>%
+      dplyr::select(method, 
+             DrugLike_Total  = Pass_Rate_Total, 
+             DrugLike_Stage1 = Pass_Rate_Stage1, 
+             DrugLike_Stage2 = Pass_Rate_Stage2,
+             DrugLike_Count  = Passed_Count) %>%
+      inner_join(
+        posebusters_analysis %>%
+          dplyr::select(method, 
+                 Structural_Total  = Pass_Rate_Total, 
+                 Structural_Stage1 = Pass_Rate_Stage1, 
+                 Structural_Stage2 = Pass_Rate_Stage2,
+                 Structural_Count  = Passed_Count),
+        by = "method"
+      )
+    
+    combined_long <- combined %>%
+      pivot_longer(
+        cols = c(DrugLike_Total, DrugLike_Stage1, DrugLike_Stage2,
+                 Structural_Total, Structural_Stage1, Structural_Stage2),
+        names_to = c("Metric", "Stage"),
+        names_pattern = "(DrugLike|Structural)_(.*)",
+        values_to = "Pass_Rate"
+      ) %>%
+      pivot_wider(
+        names_from = Metric,
+        values_from = Pass_Rate
+      ) %>%
+      mutate(Stage = factor(Stage, levels = c("Total", "Stage1", "Stage2"),
+                             labels = c("vs Total Generated", "vs Stage 1 Syntax-Valid", "vs Stage 2 Med-Chem-Valid"))) %>%
+      mutate(
+        hover_text = paste0(
+          "<b>Method:</b> ", method,
+          "<br><b>Stage:</b> ", Stage,
+          "<br><b>Drug-Like Pass Rate:</b> ", round(DrugLike, 1), "%",
+          "<br><b>Structural (PB) Pass Rate:</b> ", round(Structural, 1), "%",
+          "<br><b>Drug-Like Count:</b> ", DrugLike_Count
         )
       )
-    return(p)
+    
+    p <- ggplot(combined_long, aes(x = DrugLike, y = Structural, fill = method, size = DrugLike_Count, text = hover_text)) +
+      geom_abline(intercept = 0, slope = 1, linetype = "dashed", color = "#f43f5e", linewidth = 0.8) +
+      geom_point(shape = 21, color = "black", stroke = 0.8, alpha = 0.95) +
+      facet_wrap(~ Stage, nrow = 1) +
+      scale_fill_manual(values = method_colors) +
+      scale_size_continuous(range = c(3, 8), name = "Count") +
+      xlim(0, 100) + ylim(0, 100) +
+      theme_classic(base_size = 12) +
+      labs(
+        x = "Drug-like Pass Rate (%)",
+        y = "Structural (PoseBusters) Pass Rate (%)",
+        fill = "Generative Method"
+      ) +
+      theme(
+        strip.text = element_text(face = "bold", color = "#f8fafc", size = 11),
+        strip.background = element_rect(fill = "#1e293b", color = "#334155"),
+        axis.text = element_text(size = 9, color = "#cbd5e1"),
+        axis.title = element_text(face = "bold", color = "#f8fafc", size = 11),
+        axis.line = element_line(color = "#475569"),
+        axis.ticks = element_line(color = "#475569"),
+        panel.grid.major = element_line(color = "#1e293b", linewidth = 0.4),
+        panel.grid.minor = element_blank(),
+        legend.position = "bottom",
+        plot.background = element_rect(fill = "#111827", color = NA),
+        panel.background = element_rect(fill = "#0f172a", color = NA)
+      )
+    
+    ply <- ggplotly(p, tooltip = "text") %>%
+      layout(
+        paper_bgcolor = "#111827",
+        plot_bgcolor = "#0f172a",
+        font = list(color = "#f8fafc"),
+        showlegend = FALSE
+      )
+    
+    for (i in seq_along(ply$x$layout$annotations)) {
+      ply$x$layout$annotations[[i]]$font$color <- "#f8fafc"
+    }
+    
+    return(ply)
   })
   
   # Figure 6: Drug-like Multi-Gate Retention Funnel
@@ -1243,12 +1340,12 @@ server <- function(input, output, session) {
       plot_df <- calc_cov_lower(cov_top_dat)
       plot_df$fill_val <- plot_df$abs_cov
       fill_title <- "Absolute\nCovariance"
-      plot_title <- "Covariance of Metrics on Top Molecules (Report Figure 11)"
+      plot_title <- "Covariance of Metrics on Top Molecules"
     } else if (mode == "all") {
       plot_df <- calc_cov_lower(cov_prep)
       plot_df$fill_val <- plot_df$abs_cov
       fill_title <- "Covariance"
-      plot_title <- "Covariance of Metrics on All Molecules (Report Figure 20)"
+      plot_title <- "Covariance of Metrics on All Molecules"
     } else {
       cov_top_dat <- cov_prep[is_top_consensus == TRUE]
       if (nrow(cov_top_dat) < 5) cov_top_dat <- cov_prep
@@ -1257,7 +1354,7 @@ server <- function(input, output, session) {
       plot_df <- plot_top
       plot_df$fill_val <- plot_top$abs_cov - plot_all$abs_cov
       fill_title <- "Covariance\nDifference"
-      plot_title <- "Covariance Difference: Top vs All Molecules (Report Figure 21)"
+      plot_title <- "Covariance Difference: Top vs All Molecules"
     }
     
     finite_vals <- plot_df$fill_val[is.finite(plot_df$fill_val)]
