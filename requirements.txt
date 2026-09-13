@@ -6,6 +6,7 @@
 pandas>=1.5.0
 numpy>=1.20.0
 scipy>=1.9.0
+scikit-learn>=1.0.0
 
 # Cheminformatics & Conformation Validation
 rdkit>=2022.09.1
@@ -22,7 +23,3 @@ tqdm>=4.64.0
 
 # Deep Learning Framework (for Method Processing & Generation)
 torch>=2.0.0
-
-# Optional Structural Biology & Docking Utilities (Installable via conda/pip)
-# pdb2pqr>=3.6.0
-# openbabel

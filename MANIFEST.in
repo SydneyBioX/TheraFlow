@@ -1,0 +1,8 @@
+include README.md
+include requirements.txt
+include LICENSE
+include pyproject.toml
+include setup.py
+recursive-include pipeline *.py *.R *.sh
+recursive-include method_processing *.py
+recursive-include www *
