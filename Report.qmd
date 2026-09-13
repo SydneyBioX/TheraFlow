@@ -1725,8 +1725,23 @@ Only a small proportion of prioritised molecules satisfied the predefined molecu
 
 ```{r}
 #| label: fig-11
-md_metrics <- raw
+md_metrics <- fread("outputs/docking_qm_metrics.csv")
 
+md_metrics <- md_metrics %>%
+  mutate(
+    method = case_when(
+      tolower(Method) %in% c("biaee", "biaae") ~ "BiAAE",
+      tolower(Method) == "bicev" ~ "BiCEV",
+      tolower(Method) == "fame" ~ "FAME",
+      tolower(Method) == "gex2sgen" ~ "Gex2SGen",
+      tolower(Method) == "gxrnn" ~ "GxRNN",
+      tolower(Method) == "paccmann_rl" ~ "Paccmann RL",
+      tolower(Method) %in% c("smilesgen", "smilesgen (vae)") ~ "SmilesGEN",
+      tolower(Method) == "transgem" ~ "TransGEM",
+      tolower(Method) == "triomphe" ~ "TRIOMPHE",
+      TRUE ~ Method
+    )
+  )
 library(ggdist)
 # 1. Prepare your data
 # Select the metrics of interest
@@ -1736,6 +1751,7 @@ metrics_to_plot <- c("iPTM", "PTM", "Ranking_Score", "Total_SCF_Energy_Eh",
 
 long_md_metrics <- md_metrics %>%
   dplyr::select(method, all_of(metrics_to_plot)) %>%
+  filter(if_all(all_of(metrics_to_plot), ~ !is.na(.))) %>%
   pivot_longer(cols = -method, names_to = "Metric", values_to = "Value")
 # Define thresholds for "Good" performance
 thresholds <- data.frame(
@@ -1836,7 +1852,7 @@ md_metrics <- md_metrics %>%
 
 ```
 
-### HOMO-LUMO Gap vs Ligand RMSD (Pcoket Aligned)
+### HOMO-LUMO Gap vs Ligand RMSD (Pocket Aligned)
 
 ```{r}
 #| label: fig-13

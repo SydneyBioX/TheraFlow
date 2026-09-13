@@ -1,36 +1,52 @@
-#!/usr/bin/env python3
 import sys
 import math
 import pathlib
 
-if len(sys.argv) < 5:
-    print("Usage: python take_interface.py input.pqr ligand_resname cutoff_A output_prefix [ligand_charge]")
+if len(sys.argv) != 6:
+    print("Usage: python make_cluster_ligand.py input.pqr ligand_resname cutoff_A output_prefix ligand_charge")
+    print("Example: python make_cluster_ligand.py complex.pqr LIG 4.0 drug_cluster 0")
+    print("Example: python make_cluster_ligand.py complex.pqr STI 5.0 imatinib_cluster 1")
     sys.exit(1)
 
 infile = sys.argv[1]
 lig_resname = sys.argv[2].upper()
 cutoff = float(sys.argv[3])
 prefix = sys.argv[4]
-ligand_charge = int(sys.argv[5]) if len(sys.argv) > 5 else 0
+ligand_charge = int(sys.argv[5])
 
 
 def guess_element(atom_name, resname):
-    """Guess element from atom name and residue name."""
+    """
+    Guess element from atom name and residue name.
+    """
     resname = resname.upper()
     atom_name = atom_name.upper().strip()
     
+    # Standard protein/nucleic residues only contain H, C, N, O, S, P
     standard_residues = {
         "ALA", "ARG", "ASN", "ASP", "CYS", "GLN", "GLU", "GLY", "HIS", "ILE",
         "LEU", "LYS", "MET", "PHE", "PRO", "SER", "THR", "TRP", "TYR", "VAL",
-        "HIP", "HID", "HIE", "HSP", "HSD", "HSE", "ASH", "GLH", "LYN", "CYM", "TYM"
+        "HIP", "HID", "HIE", "HSP", "HSD", "HSE", "ASH", "GLH", "LYN", "CYM", "TYM",
+        "DA", "DC", "DG", "DT", "A", "C", "G", "U"
     }
     
+    if resname in standard_residues:
+        # For standard residues, the first letter of the atom name is the element
+        # (with a few exceptions like hydrogen names starting with numbers, e.g., 1H)
+        # Remove numbers first
+        s = ''.join([c for c in atom_name if c.isalpha()])
+        if not s:
+            return "H" # Default for numbers-only
+        first_char = s[0]
+        if first_char in ["C", "H", "N", "O", "S", "P"]:
+            return first_char
+        return "C" # Default fallback
+        
+    # For non-standard residues (ligands, ions, water):
+    # Remove numbers
     s = ''.join([c for c in atom_name if c.isalpha()])
     if not s:
         return "C"
-        
-    if resname in standard_residues:
-        return s[0] if s[0] in ["C", "H", "N", "O", "S", "P"] else "C"
         
     two_letter_elements = {
         "CL", "BR", "NA", "MG", "CA", "FE", "ZN", "CU",
@@ -40,187 +56,385 @@ def guess_element(atom_name, resname):
     
     if len(s) >= 2 and s[:2] in two_letter_elements:
         return s[:2].capitalize()
+    
     if s[0] in ["C", "H", "N", "O", "S", "P", "F", "I", "B"]:
         return s[0]
-    return "C"
+        
+    return s[0]
 
 
-def try_float(val):
+def try_float(x):
     try:
-        return float(val)
+        return float(x)
     except Exception:
         return None
-
-
-def try_int(val, default=1):
-    try:
-        return int(val)
-    except Exception:
-        return default
 
 
 def parse_atom_line(line):
-    """Parse ATOM/HETATM line flexibly from PDB, PQR, or CIF-derived outputs."""
-    line_clean = line.rstrip("\n")
-    if not line_clean.startswith(("ATOM", "HETATM")):
-        return None
-        
-    f = line_clean.split()
-    if len(f) < 7:
-        return None
-        
-    rec = f[0]
-    atom_name = f[2] if len(f) > 2 else f[1]
-    resname = f[3].upper() if len(f) > 3 else "UNK"
-    
-    # Check if ligand
-    is_lig = lig_resname in resname or "LIG" in resname
-    
-    # Try fixed column first if length >= 54
-    if len(line_clean) >= 54:
-        try:
-            aname = line_clean[12:16].strip()
-            rname = line_clean[17:20].strip().upper()
-            ch = line_clean[21].strip() or ("B" if is_lig else "A")
-            rseq_str = line_clean[22:26].strip()
-            rseq = try_int(rseq_str, 1)
-            
-            x = float(line_clean[30:38].strip())
-            y = float(line_clean[38:46].strip())
-            z = float(line_clean[46:54].strip())
-            
-            elem = line_clean[76:78].strip() if len(line_clean) >= 78 else ""
-            if not elem:
-                elem = guess_element(aname, rname)
-                
-            return {
-                "record": rec,
-                "atom_name": aname,
-                "resname": rname,
-                "chain": ch,
-                "resseq": rseq,
-                "icode": "",
-                "x": x,
-                "y": y,
-                "z": z,
-                "element": elem,
-                "charge": 0.0,
-                "radius": 1.5,
-                "line": line_clean
-            }
-        except Exception:
-            pass
-            
-    # Flexible token search for coordinates (find 3 consecutive floats)
-    floats = []
-    float_indices = []
-    for i, token in enumerate(f):
-        val = try_float(token)
-        if val is not None and "." in token:
-            floats.append(val)
-            float_indices.append(i)
-            
-    if len(floats) >= 3:
-        # Find consecutive 3 floats
-        x, y, z = floats[0], floats[1], floats[2]
-        c_idx = float_indices[0]
-        
-        # Everything before c_idx is metadata
-        meta = f[:c_idx]
-        atom_name = meta[2] if len(meta) > 2 else meta[1]
-        resname = meta[3].upper() if len(meta) > 3 else "UNK"
-        chain = "B" if is_lig else "A"
-        resseq = 1
-        
-        if len(meta) > 4:
-            if len(meta[4]) == 1 and meta[4].isalpha():
-                chain = meta[4]
-            else:
-                resseq = try_int(meta[4], 1)
-        if len(meta) > 5:
-            resseq = try_int(meta[5], resseq)
-            
-        elem = guess_element(atom_name, resname)
+    """
+    Parse ATOM/HETATM line.
+
+    Supports:
+    1. Fixed-column PDB/PQR style
+    2. Whitespace-split PQR style
+
+    Expected PQR-like format with chain:
+    ATOM serial atom resname chain resseq x y z charge radius
+
+    Example:
+    HETATM 1234 C1 LIG A 501 12.345 6.789 1.234 -0.123 1.700
+    """
+
+    # Try fixed-column parsing first
+    try:
+        rec = line[0:6].strip()
+        atom_name = line[12:16].strip()
+        resname = line[17:20].strip().upper()
+        chain = line[21].strip() or "_"
+        resseq = int(line[22:26].strip())
+        icode = line[26].strip() or ""
+
+        x = float(line[30:38].strip())
+        y = float(line[38:46].strip())
+        z = float(line[46:54].strip())
+
+        element = line[76:78].strip() if len(line) >= 78 else ""
+        if not element:
+            element = guess_element(atom_name, resname)
+
+        charge = None
+        radius = None
+
+        # Try to read PQR charge/radius from whitespace fields
+        f = line.split()
+        if len(f) >= 11:
+            q = try_float(f[-2])
+            r = try_float(f[-1])
+            if q is not None and r is not None:
+                charge = q
+                radius = r
+
         return {
             "record": rec,
             "atom_name": atom_name,
             "resname": resname,
             "chain": chain,
             "resseq": resseq,
-            "icode": "",
+            "icode": icode,
             "x": x,
             "y": y,
             "z": z,
-            "element": elem,
-            "charge": 0.0,
-            "radius": 1.5,
-            "line": line_clean
+            "element": element,
+            "charge": charge,
+            "radius": radius,
+            "line": line.rstrip("\n")
         }
-    return None
+
+    except Exception:
+        pass
+
+    # Fallback: whitespace-split PQR-like format
+    f = line.split()
+
+    if len(f) < 9:
+        raise ValueError(f"Cannot parse atom line:\n{line}")
+
+    rec = f[0]
+    atom_name = f[2]
+    resname = f[3].upper()
+
+    # Format with chain:
+    # ATOM serial atom resname chain resseq x y z charge radius
+    try:
+        chain = f[4] or "_"
+        resseq = int(f[5])
+        x, y, z = map(float, f[6:9])
+        charge = try_float(f[9]) if len(f) > 9 else None
+        radius = try_float(f[10]) if len(f) > 10 else None
+
+    except Exception:
+        # Format without chain:
+        # ATOM serial atom resname resseq x y z charge radius
+        chain = "_"
+        resseq = int(f[4])
+        x, y, z = map(float, f[5:8])
+        charge = try_float(f[8]) if len(f) > 8 else None
+        radius = try_float(f[9]) if len(f) > 9 else None
+
+    element = guess_element(atom_name, resname)
+
+    return {
+        "record": rec,
+        "atom_name": atom_name,
+        "resname": resname,
+        "chain": chain,
+        "resseq": resseq,
+        "icode": "",
+        "x": x,
+        "y": y,
+        "z": z,
+        "element": element,
+        "charge": charge,
+        "radius": radius,
+        "line": line.rstrip("\n")
+    }
 
 
-def dist(a, b):
-    return math.sqrt((a["x"] - b["x"])**2 + (a["y"] - b["y"])**2 + (a["z"] - b["z"])**2)
+# ----------------------------
+# Read atoms
+# ----------------------------
+
+atoms = []
+
+with open(infile) as fh:
+    for line in fh:
+        if line.startswith(("ATOM", "HETATM")):
+            atoms.append(parse_atom_line(line))
+
+if not atoms:
+    print(f"ERROR: No ATOM/HETATM records found in {infile}")
+    sys.exit(1)
 
 
-def main():
-    atoms = []
-    with open(infile, "r") as f:
-        for line in f:
-            if line.startswith(("ATOM", "HETATM")):
-                parsed = parse_atom_line(line)
-                if parsed:
-                    atoms.append(parsed)
-                    
-    if not atoms:
-        print(f"Error: No atoms parsed from {infile}")
-        sys.exit(1)
-        
-    ligand_atoms = [a for a in atoms if (lig_resname in a["resname"] or "LIG" in a["resname"])]
-    if not ligand_atoms:
-        print(f"Warning: No ligand atoms found with resname {lig_resname}, trying HETATM records...")
-        ligand_atoms = [a for a in atoms if a["record"] == "HETATM"]
-        
-    if not ligand_atoms:
-        print(f"Error: No ligand atoms found in {infile}")
-        sys.exit(1)
-        
-    # Find all protein residues within cutoff of any ligand atom
-    selected_reskeys = set()
-    for lig in ligand_atoms:
-        selected_reskeys.add((lig["chain"], lig["resseq"], lig["icode"], lig["resname"]))
-        
-    protein_atoms = [a for a in atoms if a not in ligand_atoms]
-    for p in protein_atoms:
-        for lig in ligand_atoms:
-            if dist(p, lig) <= cutoff:
-                selected_reskeys.add((p["chain"], p["resseq"], p["icode"], p["resname"]))
+# ----------------------------
+# Group atoms by residue
+# ----------------------------
+
+res_atoms = {}
+
+for a in atoms:
+    key = (a["chain"], a["resseq"], a["icode"], a["resname"])
+    res_atoms.setdefault(key, []).append(a)
+
+
+# ----------------------------
+# Find ligand by residue name
+# ----------------------------
+
+lig_res_keys = [
+    k for k in res_atoms
+    if k[3].upper() == lig_resname
+]
+
+if not lig_res_keys:
+    print(f"ERROR: No ligand residue with resname '{lig_resname}' found.")
+    print()
+    print("Available HETATM residue names:")
+
+    het_resnames = sorted({
+        a["resname"]
+        for a in atoms
+        if a["record"] == "HETATM"
+    })
+
+    if het_resnames:
+        for r in het_resnames:
+            n_atoms = sum(
+                1 for a in atoms
+                if a["record"] == "HETATM" and a["resname"] == r
+            )
+            print(f"  {r:>4s}  atoms={n_atoms}")
+    else:
+        print("  No HETATM residues found.")
+
+    sys.exit(1)
+
+lig_atoms = [
+    a
+    for k in lig_res_keys
+    for a in res_atoms[k]
+]
+
+print("Found ligand residue(s):")
+for k in lig_res_keys:
+    print(f"  chain={k[0]} resseq={k[1]} icode={k[2] or '-'} resname={k[3]}")
+
+print(f"Ligand atoms: {len(lig_atoms)}")
+
+
+# ----------------------------
+# Define protein residue names
+# ----------------------------
+
+protein_resnames = {
+    # Standard amino acids
+    "ALA", "ARG", "ASN", "ASP", "CYS",
+    "GLN", "GLU", "GLY", "HIS", "ILE",
+    "LEU", "LYS", "MET", "PHE", "PRO",
+    "SER", "THR", "TRP", "TYR", "VAL",
+
+    # Common protonation variants
+    "HIP", "HID", "HIE",
+    "HSP", "HSD", "HSE",
+    "ASH", "GLH",
+    "LYN",
+    "CYM", "TYM"
+}
+
+
+# ----------------------------
+# Find protein residues close to ligand
+# ----------------------------
+
+iface_keys = set()
+cut2 = cutoff * cutoff
+
+for k, ratoms in res_atoms.items():
+    chain, resseq, icode, resname = k
+
+    # Skip ligand itself
+    if k in lig_res_keys:
+        continue
+
+    # Only select protein residues
+    if resname.upper() not in protein_resnames:
+        continue
+
+    close = False
+
+    for a in ratoms:
+        ax, ay, az = a["x"], a["y"], a["z"]
+
+        for l in lig_atoms:
+            dx = ax - l["x"]
+            dy = ay - l["y"]
+            dz = az - l["z"]
+
+            if dx * dx + dy * dy + dz * dz <= cut2:
+                close = True
                 break
-                
-    cluster_atoms = [a for a in atoms if (a["chain"], a["resseq"], a["icode"], a["resname"]) in selected_reskeys]
-    
-    # Write cluster.xyz
-    xyz_out = f"{prefix}.xyz"
-    with open(xyz_out, "w") as f:
-        f.write(f"{len(cluster_atoms)}\n")
-        f.write(f"Active site cluster ({cutoff} A around {lig_resname})\n")
-        for a in cluster_atoms:
-            f.write(f"{a['element']:<2} {a['x']:12.6f} {a['y']:12.6f} {a['z']:12.6f}\n")
-            
-    # Write cluster.pdb
-    pdb_out = f"{prefix}.pdb"
-    with open(pdb_out, "w") as f:
-        for i, a in enumerate(cluster_atoms, 1):
-            f.write(f"{a['record']:<6}{i:>5} {a['atom_name']:<4} {a['resname']:<3} {a['chain']}{a['resseq']:>4}    {a['x']:8.3f}{a['y']:8.3f}{a['z']:8.3f}  1.00 50.00          {a['element']:>2}\n")
-        f.write("END\n")
-        
-    # Write cluster_charge.txt
-    chrg_out = f"{prefix}_charge.txt"
-    with open(chrg_out, "w") as f:
-        f.write(f"{ligand_charge}\n")
-        
-    print(f"Extracted {len(cluster_atoms)} cluster atoms ({len(ligand_atoms)} ligand atoms) around {lig_resname}")
+
+        if close:
+            iface_keys.add(k)
+            break
 
 
-if __name__ == "__main__":
-    main()
+selected_keys = set(lig_res_keys) | iface_keys
+
+selected_atoms = [
+    a for a in atoms
+    if (a["chain"], a["resseq"], a["icode"], a["resname"]) in selected_keys
+]
+
+
+# ----------------------------
+# Estimate cluster charge
+# ----------------------------
+
+charge_map = {
+    "ASP": -1,
+    "GLU": -1,
+    "ARG": +1,
+    "LYS": +1,
+
+    # Histidine variants
+    "HIP": +1,
+    "HSP": +1,
+    "HIS": 0,
+    "HID": 0,
+    "HIE": 0,
+    "HSD": 0,
+    "HSE": 0,
+
+    # Neutral variants
+    "ASH": 0,
+    "GLH": 0,
+    "LYN": 0,
+
+    # Deprotonated variants
+    "CYM": -1,
+    "TYM": -1
+}
+
+protein_charge = sum(
+    charge_map.get(k[3].upper(), 0)
+    for k in iface_keys
+)
+
+approx_charge = protein_charge + ligand_charge
+
+
+# ----------------------------
+# Output files
+# ----------------------------
+
+out_pdb = prefix + ".pdb"
+out_xyz = prefix + ".xyz"
+out_charge = prefix + "_charge.txt"
+out_list = prefix + "_residues.txt"
+
+
+with open(out_pdb, "w") as fh:
+    serial = 1
+
+    for a in selected_atoms:
+        fh.write(
+            f"{a['record']:<6}"
+            f"{serial:>5} "
+            f"{a['atom_name']:<4} "
+            f"{a['resname']:>3} "
+            f"{a['chain']:1}"
+            f"{a['resseq']:>4}"
+            f"{a['icode']:1}   "
+            f"{a['x']:>8.3f}"
+            f"{a['y']:>8.3f}"
+            f"{a['z']:>8.3f}"
+            f"  1.00  0.00          "
+            f"{a['element']:>2}\n"
+        )
+        serial += 1
+
+    fh.write("END\n")
+
+
+with open(out_xyz, "w") as fh:
+    fh.write(f"{len(selected_atoms)}\n")
+    fh.write(
+        f"{prefix} "
+        f"ligand={lig_resname} "
+        f"cutoff={cutoff:.2f}A "
+        f"protein_charge={protein_charge} "
+        f"ligand_charge={ligand_charge} "
+        f"approx_total_charge={approx_charge}\n"
+    )
+
+    for a in selected_atoms:
+        fh.write(
+            f"{a['element']:2s} "
+            f"{a['x']: .6f} "
+            f"{a['y']: .6f} "
+            f"{a['z']: .6f}\n"
+        )
+
+
+with open(out_charge, "w") as fh:
+    fh.write(str(approx_charge) + "\n")
+
+
+with open(out_list, "w") as fh:
+    fh.write("# Ligand residue(s)\n")
+    for k in sorted(lig_res_keys):
+        fh.write(f"LIGAND  {k[0]} {k[1]} {k[2] or '-'} {k[3]}\n")
+
+    fh.write("\n# Protein residues within cutoff\n")
+    for k in sorted(iface_keys):
+        fh.write(f"PROTEIN {k[0]} {k[1]} {k[2] or '-'} {k[3]}\n")
+
+
+# ----------------------------
+# Summary
+# ----------------------------
+
+print()
+print(f"Wrote {out_pdb}")
+print(f"Wrote {out_xyz}")
+print(f"Wrote {out_charge}")
+print(f"Wrote {out_list}")
+print()
+print(f"Cutoff = {cutoff:.2f} Å")
+print(f"Selected ligand residues = {len(lig_res_keys)}")
+print(f"Selected protein interface residues = {len(iface_keys)}")
+print(f"Selected atoms = {len(selected_atoms)}")
+print(f"Protein charge estimate = {protein_charge}")
+print(f"Ligand formal charge = {ligand_charge}")
+print(f"Approx cluster charge = {approx_charge}")

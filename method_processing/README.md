@@ -121,7 +121,8 @@ The corresponding GitHub repository or software of each method was accessed into
 
 ---
 
-## 🛠️ 3. CLI Arguments (Standardized for All Runners)
+## 🛠️ 3. TheraFlow pipeline: CLI Arguments (Standardized for All Runners)
+Main pipeline of TheraFlow to generate the performance endpoints of molecules 
 
 Each python runner script supports the following command-line interface:
 * `--run-all`: Run the model sequentially on all 7 benchmark datasets.

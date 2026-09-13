@@ -33,11 +33,12 @@ def get_canonical_smiles(s):
     """Safely converts SMILES to canonical form for robust joins."""
     if pd.isna(s) or not str(s).strip():
         return None
+    s_clean = str(s).strip().replace("[C@@H1]", "[C@@H]").replace("[C@H1]", "[C@H]").replace("[C@@1]", "[C@@]").replace("[C@1]", "[C@]")
     try:
-        mol = Chem.MolFromSmiles(str(s).strip())
-        return Chem.MolToSmiles(mol, canonical=True) if mol else str(s).strip()
+        mol = Chem.MolFromSmiles(s_clean)
+        return Chem.MolToSmiles(mol, canonical=True) if mol else s_clean
     except Exception:
-        return str(s).strip()
+        return s_clean
 
 
 def run_final_merge(

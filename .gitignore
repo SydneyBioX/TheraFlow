@@ -36,3 +36,7 @@ test_import.py
 
 Report_cache
 Report_files
+
+Reportv2.html
+app.R.bak
+pipeline/run_docking_and_merge.sh

@@ -1,202 +1,102 @@
-<img src="Figures/theraflow_hex.png" align="right" width="165" alt="TheraFlow Hex Logo">
+# TheraFlow: Multi-Tier In Silico Evaluation & Discovery Framework for Transcriptome-Driven Generative Chemistry
 
-# TheraFlow: A Multi-Stage Framework for Evaluating Generative Drug Models from Transcriptomics and Prioritizing Candidates
-
-[![Pipeline](https://img.shields.io/badge/Pipeline-7_Stages-blue.svg)](#-pipeline-architecture)
-[![Generative Models](https://img.shields.io/badge/Generative_Models-10_Supported-green.svg)](#-benchmark-generative-models--datasets)
-[![Disease Signatures](https://img.shields.io/badge/Disease_Signatures-7_Datasets-orange.svg)](#-benchmark-generative-models--datasets)
-[![Figure 2a](https://img.shields.io/badge/Figure_2a-Vector_PDF-purple.svg)](Figures/Figure2a.pdf)
-
-**TheraFlow** is an end-to-end, modular, and parallelized benchmarking and prioritization framework designed to evaluate deep generative models for transcriptomics-driven drug discovery. It bridges the gap between de novo molecular generation from disease differential gene expression signatures and downstream clinical / biophysical prioritization.
-
----
-<p align="center">
-  <img src="Figures/Figure2a.png" width="95%" alt="TheraFlow Framework Architecture">
-</p>
-<p align="center">
-  <em><strong>Figure 2a: Overview of the TheraFlow Benchmarking and Prioritization Workflow.</strong> Multi-tier evaluation systematically filters and ranks candidate molecules across: (1) Generative Macro-Quality, (2) 2D Physicochemical & Safety Filters, (3) 3D PoseBusters Physical Validity, (4) ChEMBL Bioactivity & Target Mapping, (5) DTSEA Disease DEG Reversal, (6) AlphaFold 3 Structural Docking & GFN2-xTB Quantum Chemistry, and (7) 11D Pareto Optimization & Consensus Ranking. [<a href="Figures/Figure2a.pdf"><strong>Download High-Resolution Vector PDF</strong></a>]</em>
-</p>
+**TheraFlow** is a comprehensive computational benchmarking and discovery framework for assessing de novo molecular generation from transcriptomic disease signatures. It integrates 10 deep generative architectures, medicinal chemistry filters, physical/stereochemical validation (PoseBusters), experimental bioactivity profiling (ChEMBL), disease reversal enrichment analysis (DTSEA), multi-objective Pareto consensus ranking (RRA), and AlphaFold 3 (AF3) neural co-folding with semi-empirical quantum mechanics (GFN2-xTB).
 
 ---
 
-## 🌟 Key Highlights
+## 🏗️ Architecture & Pipeline Stages
 
-- 🧪 **10 Deep Generative Methods**: Standardized execution and reimplementation pipelines for SmilesGEN, BiAAE / BiAEE, BiCEV, Paccmann RL, GxRNN, TransGEM, Triomphe, FAME, GEx2SGen, and GexMolGen.
-- 🧬 **7 Benchmark Transcriptomic Datasets**: Automated NCBI GEO download, differential expression computation (limma/edgeR), and landmark gene alignment across LINCS L1000 Phase 1/2 and 4 disease states (Cardiomyopathy, Parkinson's Disease, Hepatocellular Carcinoma, and Glaucoma).
-- 🔬 **Multi-Stage Downstream Evaluation & Prioritization**:
-  1. **Generative Performance**: Macro-metrics (Validity, Uniqueness, MOSES Novelty, and Internal Diversity).
-  2. **2D Physicochemical & Safety**: Lipinski properties, QED, SA Score, and structural alerts (PAINS, BRENK, NIH).
-  3. **3D Conformation & Physical Validity**: ETKDGv3 embedding, MMFF94 force field optimization, and PoseBusters validity checks.
-  4. **Bioactivity & Target Profiling**: ChEMBL analog searches ($\ge 60\%$ and $\ge 80\%$), target prediction, IC50/EC50 potency retrieval, and Mechanism of Action (MoA).
-  5. **DTSEA Disease Reversal**: Drug-Target Set Enrichment Analysis (DTSEA) in R scaled by compound potency and mode of action.
-  6. **Structural Docking & xTB QM Simulation**: Multi-GPU AlphaFold 3 batch complex prediction, pocket interface cluster extraction, and fast GFN2-xTB quantum chemistry calculations.
-  7. **Master Merge & 11D Pareto Consensus Ranking**: Multi-objective Pareto frontier identification, Robust Rank Aggregation (RRA), and unified 109-column master dataset consolidation.
-- ⚡ **One-Click Master Orchestrator**: `run_pipeline.py` seamlessly executes all evaluation stages, passes data between layers, and merges calculated annotations directly back into the candidate dataset.
+
 
 ---
 
-## 📂 Repository Organization
+## 🔬 Benchmark Generative Methods & Datasets
 
-```
-TheraFlow/
-├── pyproject.toml              # Modern Python packaging configuration (pip install -e .)
-├── requirements.txt            # Unified Python dependency specification
-├── README.md                   # Top-level framework documentation (this file)
-├── run_pipeline.py             # Master end-to-end evaluation orchestrator
-│
-├── Figures/                    # Publication figures and branding assets
-│   ├── theraflow_hex.png       # Official TheraFlow hex logo badge
-│   ├── Figure2a.png            # High-resolution benchmark overview figure
-│   └── Figure2a.pdf            # Publication-quality vector PDF
-│
-├── method_processing/          # Molecule Generation & Preprocessing Sub-package
-│   ├── README.md               # Method execution & dataset preprocessing documentation
-│   ├── dataset_processing.py   # Unified NCBI GEO download & DEG signature processing
-│   ├── dataset_processing.R    # Differential expression analysis in R (limma/edgeR)
-│   ├── data/                   # Reference databases and preprocessed input signatures
-│   │   ├── test_datasets/      # Landmark-aligned profiles formatted for each model
-│   │   └── LINCS/              # LINCS GSE70138 and GSE92742 signature caches
-│   ├── outputs/                # Generated raw SMILES libraries for all methods & datasets
-│   ├── smilesgen.py            # SmilesGEN orchestrator runner
-│   ├── biaee.py                # BiAAE / BiAEE orchestrator runner
-│   ├── bicev.py                # BiCEV orchestrator runner
-│   ├── paccmann_rl.py          # Paccmann RL orchestrator runner
-│   ├── gxrnn.py                # GxRNN orchestrator runner
-│   ├── transgem.py             # TransGEM orchestrator runner
-│   ├── triomphe.py             # Triomphe orchestrator runner
-│   ├── fame.py                 # FAME orchestrator runner (Self-contained)
-│   ├── gex2sgen.py             # GEx2sGen orchestrator runner (Self-contained)
-│   └── combine.py              # Consolidates all generated outputs into processed_data.csv
-│
-├── pipeline/                   # Downstream Evaluation, Ranking & Docking Package
-│   ├── README.md               # Detailed evaluation pipeline documentation
-│   ├── 1.generative_perf.py    # Step 1: Macro-level generative quality metrics
-│   ├── 2.molecular_properties.py # Step 2: 2D descriptors, safety alerts & similarities
-│   ├── 3.posebuster_convert_sdf.py # Step 3: 3D conformation embedding & PoseBusters
-│   ├── 4.potency_chembl.py     # Step 4: ChEMBL analog searches & potency retrieval
-│   ├── 5.disease_reversal.py   # Step 5: Python wrapper for DTSEA calculations
-│   ├── disease_reversal.R      # Step 5: DTSEA disease reversal calculations in R
-│   ├── 6.docking_md.py         # Step 6: AlphaFold 3 batch docking & GFN2-xTB QM calculation
-│   ├── take_interface.py       # Step 6: Binding site pocket cluster extractor
-│   ├── consensus_ranking.R     # Step 7: 11D Pareto optimization & RRA in R
-│   ├── 7.final_merge.py        # Step 7: Master merge across all 109 metrics & method standardization
-│   └── run_all.py              # Master pipeline wrapper (equivalent to run_pipeline.py)
-│
-└── outputs/                    # Output directory for all evaluation metrics and rankings
-    ├── set_properties.csv
-    ├── molecular_properties_metrics.csv
-    ├── filtered_3d.sdf
-    ├── molecular_properties_with_posebusters.csv
-    ├── chembl_targets.csv
-    ├── potency_scores.csv
-    ├── reversal_res.csv
-    ├── consensus_top.csv
-    ├── af3_batch_input.json
-    ├── docking_qm_metrics.csv
-    └── merged_master_dataframe.csv
-```
+### Generative Architectures Evaluated (10 Methods):
+| Method | Representation | Architecture / Paradigm |
+|---|---|---|
+| **SmilesGEN** | SMILES | Reinforcement Learning & RNN |
+| **BiAAE** | SMILES | Bidirectional Adversarial Autoencoder |
+| **BiCEV** | SMILES | Conditional Variational Autoencoder |
+| **Paccmann RL** | SMILES | Multimodal Reinforcement Learning |
+| **GxRNN** | SMILES | Expression-Conditioned Recurrent Neural Network |
+| **TransGEM** | SMILES | Transformer-based Expression-to-Molecule Decoder |
+| **TRIOMPHE** | SELFIES | Transcriptome-conditioned Deep Generator |
+| **FAME** | SELFIES | Feature-Augmented Molecular Exploration |
+| **Gex2SGen** | SELFIES | Gene Expression to SELFIES Sequence Model |
+| **gexmolgen** | SMILES | Conditional Generative Diffusion & Language Framework |
+
+### Benchmark Disease Datasets:
+1. **Cardiomyopathy** (`cardiomyopathy`): Dilated cardiomyopathy differential expression (Target: TTN / MYH7).
+2. **Glaucoma** (`glaucoma` & `glaucoma_bulk`): Primary open-angle glaucoma trabecular meshwork & bulk RNA-seq (Target: PTGFR).
+3. **HCC** (`hcc`): Hepatocellular carcinoma tumor vs. normal differential profile (Target: VEGFR2 / KDR).
+4. **Parkinson's** (`parkinsons`): Parkinson's disease substantia nigra profile (Target: SNCA).
+5. **Control Datasets** (`lincs1000_1`, `lincs1000_2`): LINCS L1000 landmark perturbation signatures.
 
 ---
 
-## 🛠️ Installation & Setup
+## ⚡ Pipeline Stages Summary
 
-### 1. Python Environment Setup
-Install the Python dependencies in a clean virtual or Conda environment:
+The TheraFlow pipeline executes seamlessly end-to-end via `TheraFlow/pipeline/`:
+
+1. **Stage 1: Generative Performance & Distributional Metrics (`1.generative_perf.py`)**  
+   Computes syntax validity, uniqueness, MOSES novelty against reference databases, and internal structural diversity across generated libraries.
+
+2. **Stage 2: 2D Physicochemical Descriptors & Safety Alerts (`2.molecular_properties.py`)**  
+   Calculates MW, LogP, TPSA, QED, Synthetic Accessibility (SA Score), F_Csp3, and screens against PAINS, BRENK, and NIH structural toxicity alerts.
+
+3. **Stage 3: 3D Conformer Generation & PoseBusters Validation (`3.posebuster_convert_sdf.py`)**  
+   Generates ETKDGv3 energy-minimized 3D conformers and runs PoseBusters to evaluate stereochemical integrity, bond lengths, valence angles, and steric clashes.
+
+4. **Stage 4: ChEMBL Target Matching & Potency Profiling (`4.potency_chembl.py`)**  
+   Retrieves structural analogs from ChEMBL 34, mapping experimental target annotations (UniProt IDs, target genes, mechanisms of action) and experimental bioactivity (pChEMBL, IC50, EC50).
+
+5. **Stage 5: DTSEA Transcriptomic Disease Reversal (`5.disease_reversal.py` / `disease_reversal.R`)**  
+   Weights drug-target perturbations on the human protein-protein interaction (PPI) network to calculate Drug-Target Set Enrichment Analysis (DTSEA) Normalized Enrichment Scores (NES) against disease differential signatures.
+
+6. **Stage 6: AlphaFold 3 Batch Neural Docking & GFN2-xTB QM Analysis (`6.docking_md.py`)**  
+   - Predicts 3D target-ligand complex co-folded structures using AlphaFold 3 across parallel GPUs.
+   - Extracts active site binding pockets (4.0-5.0 Å) via `take_interface.py`.
+   - Runs semi-empirical GFN2-xTB calculations across 16 CPU cores to derive quantum chemical descriptors (HOMO-LUMO gap, total dipole moment, SCF energy, Wiberg bond orders, pocket RMSD).
+
+7. **Stage 7: Consensus Prioritization & Master Dataset Integration (`7.final_merge.py` / `consensus_ranking.R`)**  
+   Applies 11-dimensional Pareto optimization and Robust Rank Aggregation (RRA) to select top candidate molecules per method/disease and consolidates all 100+ evaluation metrics into `merged_master_dataframe.csv`.
+
+---
+
+## 🚀 Quick Execution
+
+### 1. Run Complete End-to-End Evaluation Pipeline
 ```bash
-# Clone the repository
-git clone https://github.com/SydneyBioX/TheraFlow.git
-cd TheraFlow
-
-# Install Python dependencies
-pip install -r requirements.txt
-
-# (Optional) Install the package in editable mode
-pip install -e .
+python TheraFlow/run_pipeline.py   --input TheraFlow/method_processing/data/processed_data.csv   --output_dir TheraFlow/outputs
 ```
 
-### 2. R Dependencies (for DTSEA & Consensus Ranking)
-Ensure R ($\ge 4.0$) is installed and install the required CRAN and Bioconductor packages:
-```R
-install.packages(c("dplyr", "readr", "data.table", "tidyr", "rPref", "RobustRankAggreg", "jsonlite", "igraph", "purrr", "stringr", "BiocManager"))
-BiocManager::install("DTSEA")
-```
-
-### 3. External Structural & QM Tools
-- **AlphaFold 3**: For batch structural complex modeling.
-- **GFN2-xTB** (`xtb`): For fast semi-empirical quantum mechanical electronic stability and HOMO-LUMO gap calculation.
-- **PDB2PQR** (`pdb2pqr`): For PARSE protonation and partial charge assignment.
-
----
-
-## ⚡ Quick Start
-
-### Step 1: Preprocessing & Candidate Generation
-To download raw signatures, compute disease DEGs, align input profiles, and run candidate generation across models:
+### 2. Run AF3 Neural Docking, xTB QM & Master Merge
 ```bash
-# 1. Download raw GEO datasets and preprocess signatures
-python TheraFlow/method_processing/dataset_processing.py
-
-# 2. Run generative models (e.g. SmilesGEN, BiAAE, etc.)
-python TheraFlow/method_processing/smilesgen.py --run-all
-python TheraFlow/method_processing/biaee.py --run-all
-
-# 3. Consolidate generated SMILES into master dataset
-python TheraFlow/method_processing/combine.py
+bash TheraFlow/pipeline/run_docking_and_merge.sh
 ```
-*See [method_processing/README.md](TheraFlow/method_processing/README.md) for full details on method environments and runner scripts.*
 
-### Step 2: Master Downstream Evaluation & Ranking
-Run the complete multi-stage evaluation pipeline end-to-end with a single command:
+### 3. Launch Interactive TheraFlow Dashboard
 ```bash
-python TheraFlow/run_pipeline.py   --input TheraFlow/method_processing/data/processed_data.csv   --output_dir TheraFlow/outputs   --output_merged TheraFlow/method_processing/data/processed_data.csv
+Rscript -e "shiny::runApp('TheraFlow', port=8080)"
 ```
-This executes Steps 1 through 7, produces top consensus candidates (`consensus_top.csv`), exports AlphaFold 3 batch input JSON (`af3_batch_input.json`), runs xTB QM stability metrics, and automatically merges all 109 calculated properties back into `processed_data.csv` (with automatic backup).
-
-*See [pipeline/README.md](TheraFlow/pipeline/README.md) for individual stage commands, CLI flags, and data schemas.*
 
 ---
 
-## 🔬 Benchmark Generative Models & Datasets
+## 📊 Outputs & Data Directory Structure
 
-### Generative Models Supported:
-| Model | Representation | Architecture / Methodology | Standardized Name | Runner Script |
-|---|---|---|---|---|
-| **SmilesGEN** | SMILES | Reinforcement Learning & RNN | `SmilesGEN (VAE)` | `smilesgen.py` |
-| **BiAAE / BiAEE** | SMILES | Bidirectional Adversarial Autoencoder | `BiAAE` / `BiAEE` | `biaee.py` |
-| **BiCEV** | SMILES | Conditional Variational Autoencoder | `BiCEV` | `bicev.py` |
-| **Paccmann RL** | SMILES | Multimodal RL for Anticancer Compounds | `Paccmann RL` | `paccmann_rl.py` |
-| **GxRNN** | SMILES | Expression-conditioned RNN | `GxRNN` | `gxrnn.py` |
-| **TransGEM** | SMILES | Transformer-based Expression-to-Molecule | `TransGEM` | `transgem.py` |
-| **Triomphe** | SELFIES | Transcriptome-conditioned Deep Generator | `Triomphe` | `triomphe.py` |
-| **FAME** | SELFIES | Feature-Augmented Molecular Exploration (Reimplemented) | `FAME` | `fame.py` |
-| **GEx2SGen** | SELFIES | Gene Expression to SELFIES Generator (Reimplemented) | `Gex2SGen` | `gex2sgen.py` |
-| **GexMolGen** | SMILES / Web | Conditional Generative Framework | `GexMolGen` | `gexmolgen` |
-
-### Benchmark Transcriptomic Datasets:
-1. `lincs1000_1`: LINCS L1000 Phase 1 landmark perturbation signatures.
-2. `lincs1000_2`: LINCS L1000 Phase 2 landmark perturbation signatures.
-3. `cardiomyopathy`: Dilated cardiomyopathy disease differential expression profile.
-4. `parkinsons`: Parkinson's disease substantia nigra differential expression profile.
-5. `hcc`: Hepatocellular carcinoma tumor vs. normal differential expression profile.
-6. `glaucoma`: Primary open-angle glaucoma trabecular meshwork profile.
-7. `glaucoma_bulk`: Glaucoma bulk RNA-seq differential signature.
-
----
-
-## 📊 Summary of Evaluation Outputs
-
-All pipeline outputs are structured under `TheraFlow/outputs/`:
+All generated results are organized under `TheraFlow/outputs/`:
 
 | Output File | Description |
 |---|---|
-| `set_properties.csv` | Distributional quality metrics (Validity, Uniqueness, MOSES Novelty, Internal Diversity). |
-| `molecular_properties_metrics.csv` | 2D Physicochemical descriptors, SA score, QED, PAINS/BRENK/NIH structural alerts. |
-| `filtered_3d.sdf` | Energy-minimized 3D molecular conformations generated by ETKDGv3. |
-| `molecular_properties_with_posebusters.csv` | InChIKey-deduplicated table with PoseBusters physical validity flags. |
-| `chembl_targets.csv` | Matched ChEMBL analog compounds, target genes, UniProt IDs, and Mechanism of Action. |
-| `potency_scores.csv` | Retrieved experimental bioactivity metrics (IC50, EC50, pChEMBL, nM potency). |
-| `reversal_res.csv` | DTSEA disease DEG reversal scores (Enrichment Score, NES, p-value, FDR q-value). |
-| `consensus_top.csv` | Top prioritized candidates per method and dataset from 11D Pareto & RRA ranking. |
-| `af3_batch_input.json` | Ready-to-run batch input specification for AlphaFold 3 complex structure prediction. |
-| `docking_qm_metrics.csv` | AlphaFold 3 ligand pLDDT, complex ranking score, and GFN2-xTB QM electronic descriptors. |
-| `merged_master_dataframe.csv` | Unified master table combining all 2D, 3D, ChEMBL potency, reversal, and docking/QM metrics. |
+| `set_properties.csv` | Distributional quality metrics (Validity, Uniqueness, Novelty, Diversity). |
+| `molecular_properties_metrics.csv` | 2D Physicochemical descriptors, SA score, QED, PAINS/BRENK/NIH alerts. |
+| `filtered_3d.sdf` | Energy-minimized 3D molecular conformations. |
+| `molecular_properties_with_posebusters.csv` | Deduplicated dataset with PoseBusters physical validity flags. |
+| `chembl_targets.csv` | Matched ChEMBL analog compounds, target genes, and mechanism of action. |
+| `potency_scores.csv` | Retrieved experimental bioactivity metrics (IC50, pChEMBL). |
+| `reversal_res.csv` | DTSEA disease DEG reversal scores (Enrichment Score, NES, p-values). |
+| `consensus_top.csv` | Top prioritized candidate molecules per method and disease from Pareto/RRA ranking. |
+| `af3_batch_input.json` | AlphaFold 3 batch input specifications for target-ligand complexes. |
+| `docking_qm_metrics.csv` | AlphaFold 3 confidence scores and GFN2-xTB quantum descriptors. |
+| `merged_master_dataframe.csv` | Unified master table combining all 100+ metrics across the entire molecule collection. |

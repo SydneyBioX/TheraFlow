@@ -35,30 +35,19 @@ from tqdm import tqdm
 # =============================================================================
 
 def clean_job_for_af3_dialect(job):
-    """Ensures AF3 job dialect conformity (converts integer counts to int, wraps lists)."""
-    cleaned = {
-        "name": str(job["name"]),
-        "modelSeeds": [int(s) for s in job.get("modelSeeds", [1])],
-        "sequences": []
-    }
-    for seq in job.get("sequences", []):
-        if "protein" in seq:
-            cleaned["sequences"].append({
-                "protein": {
-                    "id": str(seq["protein"]["id"]),
-                    "sequence": str(seq["protein"]["sequence"]),
-                    "count": int(seq["protein"].get("count", 1))
-                }
-            })
-        elif "ligand" in seq:
-            cleaned["sequences"].append({
-                "ligand": {
-                    "id": str(seq["ligand"]["id"]),
-                    "smiles": str(seq["ligand"]["smiles"]),
-                    "count": int(seq["ligand"].get("count", 1))
-                }
-            })
-    return cleaned
+    """Ensures AF3 job dialect conformity (deletes forbidden 'count' keys, adds dialect/version)."""
+    job_copy = json.loads(json.dumps(job))
+    job_copy['dialect'] = "alphafold3"
+    job_copy['version'] = 1
+    
+    for seq in job_copy.get('sequences', []):
+        if 'protein' in seq:
+            if 'count' in seq['protein']:
+                del seq['protein']['count']
+        elif 'ligand' in seq:
+            if 'count' in seq['ligand']:
+                del seq['ligand']['count']
+    return job_copy
 
 
 def run_af3_batch_pipeline(
@@ -66,9 +55,10 @@ def run_af3_batch_pipeline(
     af3_dir="/users/stgrad/rojashrj/Projects/omics2mol/alphafold3",
     output_dir="TheraFlow/outputs/af3_predictions",
     af3_python="/verona/nobackup/rojashrj/miniconda3/envs/af3_312/bin/python",
-    gpus=["0", "1", "2"]
+    gpus=["0", "1", "2", "3"],
+    precompute_dir="/users/stgrad/rojashrj/Projects/omics2mol/alphafold3/output_precompute"
 ):
-    """Executes AlphaFold 3 batch neural folding across multiple GPUs."""
+    """Executes AlphaFold 3 batch neural folding across multiple GPUs with cached MSAs."""
     input_json = Path(input_json_path).resolve()
     if not input_json.exists():
         raise FileNotFoundError(f"Input JSON not found: {input_json}")
@@ -80,33 +70,96 @@ def run_af3_batch_pipeline(
         jobs = json.load(f)
     print(f"Loaded {len(jobs)} AF3 docking jobs from {input_json}")
     
-    # Split across GPUs
-    n_gpus = len(gpus)
-    splits = [[] for _ in range(n_gpus)]
-    for i, j in enumerate(jobs):
-        splits[i % n_gpus].append(clean_job_for_af3_dialect(j))
+    # 1. Load cached MSAs and templates from precompute directory
+    msa_cache = {}
+    precompute_path = Path(precompute_dir).resolve()
+    if precompute_path.exists():
+        for sub in os.listdir(precompute_path):
+            sub_dir = precompute_path / sub
+            if sub_dir.is_dir():
+                for f_name in os.listdir(sub_dir):
+                    if f_name.endswith("_data.json"):
+                        data_json_path = sub_dir / f_name
+                        try:
+                            with open(data_json_path, "r") as df:
+                                data = json.load(df)
+                            for seq in data.get("sequences", []):
+                                if "protein" in seq:
+                                    prot_seq = seq["protein"]["sequence"]
+                                    msa_cache[prot_seq] = {
+                                        "unpairedMsa": seq["protein"].get("unpairedMsa"),
+                                        "pairedMsa": seq["protein"].get("pairedMsa"),
+                                        "templates": seq["protein"].get("templates", [])
+                                    }
+                                    break
+                        except Exception as e:
+                            print(f"Warning loading {data_json_path}: {e}")
+    print(f"Cached MSAs/templates loaded for {len(msa_cache)} target protein sequences.")
+    
+    # 2. Populate jobs with cached MSAs
+    populated_jobs = []
+    for job in jobs:
+        job_cleaned = clean_job_for_af3_dialect(job)
+        for seq in job_cleaned.get("sequences", []):
+            if "protein" in seq:
+                prot_seq = seq["protein"]["sequence"]
+                if prot_seq in msa_cache:
+                    seq["protein"]["unpairedMsa"] = msa_cache[prot_seq]["unpairedMsa"]
+                    seq["protein"]["pairedMsa"] = msa_cache[prot_seq]["pairedMsa"]
+                    seq["protein"]["templates"] = msa_cache[prot_seq]["templates"]
+                break
+        populated_jobs.append(job_cleaned)
         
+    # 3. Split across GPUs
+    n_gpus = len(gpus)
+    chunk_size = (len(populated_jobs) + n_gpus - 1) // n_gpus
     processes = []
-    for idx, (gpu, split_jobs) in enumerate(zip(gpus, splits)):
-        if not split_jobs:
+    
+    af3_path = Path(af3_dir).resolve()
+    model_dir = af3_path / "weights"
+    db_dir = af3_path / "database"
+    
+    for idx, gpu in enumerate(gpus):
+        chunk = populated_jobs[idx * chunk_size : (idx + 1) * chunk_size]
+        if not chunk:
             continue
-        split_json = out_dir / f"af3_split_gpu_{gpu}.json"
-        with open(split_json, "w") as f:
-            json.dump(split_jobs, f, indent=2)
             
+        gpu_dir = out_dir / f"populated_input_batch_gpu{gpu}"
+        if gpu_dir.exists():
+            shutil.rmtree(gpu_dir)
+        os.makedirs(gpu_dir, exist_ok=True)
+        
+        for j in chunk:
+            j_file = gpu_dir / f"{j['name']}.json"
+            with open(j_file, "w") as jf:
+                json.dump(j, jf, indent=2)
+                
         cmd = [
-            af3_python, str(Path(af3_dir) / "run_alphafold.py"),
-            f"--json_path={split_json}",
-            f"--output_dir={out_dir}"
+            af3_python, str(af3_path / "run_alphafold.py"),
+            f"--input_dir={gpu_dir}",
+            "--run_data_pipeline=False",
+            f"--model_dir={model_dir}",
+            f"--db_dir={db_dir}",
+            f"--output_dir={out_dir}",
+            "--force_output_dir=True"
         ]
+        
+        log_path = out_dir / f"run_af3_gpu{gpu}.log"
+        log_file = open(log_path, "w")
+        
         env = os.environ.copy()
         env["CUDA_VISIBLE_DEVICES"] = str(gpu)
-        print(f"Launching GPU {gpu} worker ({len(split_jobs)} jobs)...")
-        p = subprocess.Popen(cmd, env=env)
-        processes.append((gpu, p))
+        af3_env_bin = str(Path(af3_python).parent)
+        env["PATH"] = af3_env_bin + ":" + env.get("PATH", "")
         
-    for gpu, p in processes:
+        print(f"Launching GPU {gpu} worker ({len(chunk)} jobs, logs at {log_path})...")
+        p = subprocess.Popen(cmd, stdout=log_file, stderr=subprocess.STDOUT, env=env)
+        processes.append((gpu, p, log_file))
+        
+    print(f"All {len(processes)} GPU inference workers launched. Monitoring execution...")
+    for gpu, p, log_file in processes:
         p.wait()
+        log_file.close()
         print(f"GPU {gpu} worker finished with exit code {p.returncode}")
         
     print("All AlphaFold 3 batch inference runs complete!")
@@ -219,17 +272,40 @@ def run_single_xtb_task(cif_file, qm_dir, cutoff=4.0):
         cmd_xtb = [
             xtb_bin, str(cluster_xyz),
             "--gfn", "2",
+            "--opt", "loose",
+            "--alpb", "water",
             "--chrg", chrg,
             "--wbo",
             "--dipole"
         ]
         try:
             with open(out_log, "w") as out_f:
-                subprocess.run(cmd_xtb, cwd=str(target_out / "04_xtb"), stdout=out_f, stderr=subprocess.STDOUT, env=env, timeout=90)
+                subprocess.run(cmd_xtb, cwd=str(target_out / "04_xtb"), stdout=out_f, stderr=subprocess.STDOUT, env=env, timeout=120)
         except Exception as e:
-            print(f"Warning: xTB failed for {cif_name}: {e}")
+            print(f"Warning: xTB loose opt timed out or failed for {cif_name}: {e}")
             
-        # Copy cluster.xyz to xtbopt.xyz as coordinates
+        # If dipole or energy was not finalized, run fast property calculation
+        need_sp = True
+        if out_log.exists():
+            txt = out_log.read_text()
+            if "molecular dipole:" in txt and ("TOTAL ENERGY" in txt or "total energy" in txt):
+                need_sp = False
+        if need_sp:
+            cmd_sp = [
+                xtb_bin, str(cluster_xyz),
+                "--gfn", "2",
+                "--alpb", "water",
+                "--chrg", chrg,
+                "--wbo",
+                "--dipole"
+            ]
+            try:
+                with open(out_log, "a") as out_f:
+                    subprocess.run(cmd_sp, cwd=str(target_out / "04_xtb"), stdout=out_f, stderr=subprocess.STDOUT, env=env, timeout=60)
+            except Exception as e:
+                print(f"Warning: xTB single-point fallback failed for {cif_name}: {e}")
+
+        # Copy cluster.xyz to xtbopt.xyz if opt didn't generate it
         if not (target_out / "04_xtb" / "xtbopt.xyz").exists():
             shutil.copy2(cluster_xyz, target_out / "04_xtb" / "xtbopt.xyz")
             
@@ -334,13 +410,12 @@ def parse_xtb_output(out_path):
         return {}
     with open(out_path, "r") as f:
         content = f.read()
-    energy_matches = re.findall(r"TOTAL ENERGY\s+([\d.-]+)\s+Eh", content)
-    gap_matches = re.findall(r"HOMO-LUMO GAP\s+([\d.-]+)\s+eV", content)
+    energy_matches = re.findall(r"(?:TOTAL ENERGY|total energy)\s*[:]?\s*([\d.-]+)\s*Eh", content, re.IGNORECASE)
+    gap_matches = re.findall(r"HOMO-LUMO\s+(?:GAP|gap)\s*[:]?\s*([\d.-]+)\s*eV", content, re.IGNORECASE)
     dipole_pos = content.rfind("molecular dipole:")
     dipole_moment = None
     if dipole_pos != -1:
-        dipole_block = content[dipole_pos:dipole_pos+500]
-        m = re.search(r"full:\s+[\d.-]+\s+[\d.-]+\s+[\d.-]+\s+([\d.-]+)", dipole_block)
+        m = re.search(r"full:\s+[\d.-]+\s+[\d.-]+\s+[\d.-]+\s+([\d.-]+)", content[dipole_pos:dipole_pos+500])
         if m:
             dipole_moment = float(m.group(1))
     return {
@@ -388,197 +463,322 @@ def extract_docking_and_qm_metrics(
 
     qm_candidates = [Path(qm_dir), Path("TheraFlow/outputs/docking_md_runs"), Path("TheraFlow/outputs_new/docking_md_runs"), Path("outputs/docking_md_runs")]
     qm_path = next((p.resolve() for p in qm_candidates if p.exists()), Path(qm_dir).resolve())
-    
+
+    # Build job -> SMILES mapping from all available batch input JSONs
     job_meta_map = {}
-    input_json = Path(input_json_path)
-    if input_json.exists():
-        try:
-            with open(input_json, "r") as f:
-                jobs = json.load(f)
-            for j in jobs:
-                name = j.get("name")
-                lig_smi = ""
-                for s in j.get("sequences", []):
-                    if "ligand" in s:
-                        lig_smi = s["ligand"].get("smiles", "")
-                job_meta_map[name] = lig_smi
-        except Exception as e:
-            print(f"Note: Could not parse metadata from input JSON: {e}")
-            
-    target_dirs = []
-    if af3_path.exists():
-        target_dirs.extend([d for d in af3_path.iterdir() if d.is_dir() and not d.name.startswith(("_", "."))])
-        
-    print(f"Extracting docking & QM metrics across {len(target_dirs)} candidate predictions...")
-    records = []
-    
-    for td in target_dirs:
-        raw_name = td.name
-        job_name = raw_name[4:] if raw_name.startswith("run_") else raw_name
-        
-        method = "Unknown"
-        dataset = "Unknown"
-        model_idx = None
-        
-        for d in ["glaucoma_bulk", "glaucoma", "cardiomyopathy", "parkinsons", "hcc", "lincs1000_1", "lincs1000_2"]:
-            if d in job_name:
-                dataset = d
-                break
-                
-        parts = job_name.split("_")
-        if len(parts) >= 2:
+    json_candidates = [
+        Path(input_json_path),
+        Path("TheraFlow/outputs/af3_batch_input.json"),
+        Path("TheraFlow/outputs_new/af3_batch_input.json"),
+        Path("alphafold3/af3_batch_input_result5.json"),
+        Path("alphafold3/af3_batch_input_result5_transgem.json"),
+        Path("alphafold3/af3_batch_input_supplement.json"),
+    ]
+    for j_path in json_candidates:
+        if j_path.exists():
             try:
-                model_idx = int(parts[-1])
-            except ValueError:
-                model_idx = None
-            if parts[0] == "docking":
-                method = parts[1]
-            else:
-                method = parts[0]
-                
-        # 1. AF3 Confidence JSON
-        af3_json = af3_path / job_name / f"{job_name}_summary_confidences.json"
-        iptm = None
-        ptm = None
-        ranking_score = None
-        if af3_json.exists():
-            try:
-                with open(af3_json, "r") as f:
-                    conf = json.load(f)
-                iptm = conf.get("iptm")
-                ptm = conf.get("ptm")
-                ranking_score = conf.get("ranking_score")
-            except Exception:
+                with open(j_path, "r") as f:
+                    jobs = json.load(f)
+                for j in jobs:
+                    name = j.get("name")
+                    lig_smi = ""
+                    for s in j.get("sequences", []):
+                        if "ligand" in s:
+                            lig_smi = s["ligand"].get("smiles", "")
+                    if name and lig_smi:
+                        job_meta_map[name] = lig_smi
+                        job_meta_map[name.lower()] = lig_smi
+                        job_meta_map[f"run_{name}_model"] = lig_smi
+                        job_meta_map[f"run_{name.lower()}_model"] = lig_smi
+            except Exception as e:
                 pass
-                
-        # 2. CIF pLDDT scores
-        cif_file = af3_path / job_name / f"{job_name}_model.cif"
-        mean_prot_plddt = None
-        mean_lig_plddt = None
-        if cif_file.exists():
-            prot_plddts = []
-            lig_plddts = []
-            with open(cif_file, "r") as cf:
-                for line in cf:
-                    if line.startswith(("ATOM", "HETATM")):
-                        p = line.split()
-                        if len(p) >= 15:
-                            try:
-                                res = p[5].upper()
-                                biso = float(p[14])
-                                if "LIG" in res:
-                                    lig_plddts.append(biso)
-                                else:
-                                    prot_plddts.append(biso)
-                            except Exception:
-                                pass
-            if prot_plddts:
-                mean_prot_plddt = round(sum(prot_plddts) / len(prot_plddts), 2)
-            if lig_plddts:
-                mean_lig_plddt = round(sum(lig_plddts) / len(lig_plddts), 2)
-                
-        # 3. xTB and Kabsch RMSD Calculations
-        qm_job_dir = qm_path / f"run_{job_name}_model" if (qm_path / f"run_{job_name}_model").exists() else (qm_path / f"run_{job_name}" if (qm_path / f"run_{job_name}").exists() else qm_path / job_name)
-        
-        pdb_path = qm_job_dir / "03_cluster" / "cluster.pdb"
-        xyz_path = qm_job_dir / "04_xtb" / "xtbopt.xyz"
-        xtb_out = qm_job_dir / "04_xtb" / "cluster_xtb.out"
-        wbo_path = qm_job_dir / "04_xtb" / "wbo"
-        
-        xtb_props = parse_xtb_output(str(xtb_out))
-        
-        pocket_bb_rmsd = None
-        ligand_pocket_aligned_rmsd = None
-        ligand_self_aligned_rmsd = None
-        min_wbo = None
-        
-        if pdb_path.exists() and xyz_path.exists():
-            try:
-                start_coords, atom_types = parse_pdb_atoms(str(pdb_path))
-                opt_coords = read_xyz_coordinates(str(xyz_path))
-                if start_coords is not None and opt_coords is not None and len(start_coords) == len(opt_coords):
-                    lig_idx = [i for i, a in enumerate(atom_types) if a["resname"] == "LIG"]
-                    pock_idx = [i for i, a in enumerate(atom_types) if a["resname"] != "LIG"]
-                    pock_bb_idx = [i for i, a in enumerate(atom_types) if a["resname"] != "LIG" and a["atom_name"] in ["CA", "C", "N", "O"]]
-                    
-                    if pock_bb_idx:
-                        P_start = start_coords[pock_bb_idx]
-                        P_opt = opt_coords[pock_bb_idx]
-                        c_P, c_Q, R = kabsch_alignment(P_opt, P_start)
-                        P_opt_aligned = apply_transform(P_opt, c_P, c_Q, R)
-                        pocket_bb_rmsd = round(calculate_rmsd(P_opt_aligned, P_start), 3)
-                        
+
+    # -------------------------------------------------------------------------
+    # 1. Parse QM runs from qm_path (TheraFlow/outputs/docking_md_runs)
+    # -------------------------------------------------------------------------
+    qm_records = {}
+    if qm_path.exists():
+        qm_dirs = [d for d in qm_path.iterdir() if d.is_dir() and not d.name.startswith(("_", "."))]
+        print(f"Parsing QM & Kabsch RMSD metrics across {len(qm_dirs)} simulation directories...")
+        for qd in qm_dirs:
+            raw_name = qd.name
+            job_name = raw_name[4:] if raw_name.startswith("run_") else raw_name
+            if job_name.endswith("_model"):
+                job_name = job_name[:-6]
+
+            method = "Unknown"
+            dataset = "Unknown"
+            model_idx = None
+
+            for d in ["glaucoma_bulk", "glaucoma", "cardiomyopathy", "parkinsons", "hcc", "lincs1000_1", "lincs1000_2"]:
+                if d in raw_name.lower():
+                    dataset = d
+                    break
+
+            parts = raw_name.split("_")
+            for p in parts:
+                if p.isdigit():
+                    model_idx = int(p)
+                    break
+            
+            # Identify method name
+            for m in ["biaee", "bicev", "fame", "gex2sgen", "gexmolgen", "gxrnn", "paccmann_rl", "smilesgen", "transgem", "triomphe"]:
+                if m in raw_name.lower():
+                    method = m
+                    break
+
+            # xTB properties
+            xtb_out = qd / "04_xtb" / "cluster_xtb.out"
+            xtb_props = parse_xtb_output(str(xtb_out))
+
+            # RMSD & WBO
+            pdb_path = qd / "03_cluster" / "cluster.pdb"
+            xyz_path = qd / "04_xtb" / "xtbopt.xyz"
+            wbo_path = qd / "04_xtb" / "wbo"
+
+            pocket_bb_rmsd = None
+            ligand_pocket_aligned_rmsd = None
+            ligand_self_aligned_rmsd = None
+            min_wbo = None
+
+            if pdb_path.exists() and xyz_path.exists():
+                try:
+                    start_coords, atom_types = parse_pdb_atoms(str(pdb_path))
+                    opt_coords = read_xyz_coordinates(str(xyz_path))
+                    if start_coords is not None and opt_coords is not None and len(start_coords) == len(opt_coords):
+                        lig_idx = [i for i, a in enumerate(atom_types) if a["resname"] == "LIG"]
+                        pock_idx = [i for i, a in enumerate(atom_types) if a["resname"] != "LIG"]
+                        pock_bb_idx = [i for i, a in enumerate(atom_types) if a["resname"] != "LIG" and a["atom_name"] in ["CA", "C", "N", "O"]]
+
+                        if pock_bb_idx:
+                            P_start = start_coords[pock_bb_idx]
+                            P_opt = opt_coords[pock_bb_idx]
+                            c_P, c_Q, R = kabsch_alignment(P_opt, P_start)
+                            P_opt_aligned = apply_transform(P_opt, c_P, c_Q, R)
+                            pocket_bb_rmsd = round(calculate_rmsd(P_opt_aligned, P_start), 3)
+
+                            if lig_idx:
+                                L_start = start_coords[lig_idx]
+                                L_opt = opt_coords[lig_idx]
+                                L_opt_aligned = apply_transform(L_opt, c_P, c_Q, R)
+                                ligand_pocket_aligned_rmsd = round(calculate_rmsd(L_opt_aligned, L_start), 3)
+
                         if lig_idx:
                             L_start = start_coords[lig_idx]
                             L_opt = opt_coords[lig_idx]
-                            L_opt_aligned = apply_transform(L_opt, c_P, c_Q, R)
-                            ligand_pocket_aligned_rmsd = round(calculate_rmsd(L_opt_aligned, L_start), 3)
-                            
-                    if lig_idx:
-                        L_start = start_coords[lig_idx]
-                        L_opt = opt_coords[lig_idx]
-                        c_L_opt, c_L_start, R_L = kabsch_alignment(L_opt, L_start)
-                        L_opt_self_aligned = apply_transform(L_opt, c_L_opt, c_L_start, R_L)
-                        ligand_self_aligned_rmsd = round(calculate_rmsd(L_opt_self_aligned, L_start), 3)
-                        
-                    min_wbo = parse_wbo_min(str(wbo_path), lig_idx, pock_idx)
-                    if min_wbo is not None:
-                        min_wbo = round(min_wbo, 4)
-            except Exception as e:
-                pass
-                
-        smiles_val = None
-        for cand in [td / f"{raw_name}_data.json", td / f"{job_name}_data.json", af3_path / job_name / f"{job_name}_data.json"]:
-            if cand.exists():
+                            c_L_opt, c_L_start, R_L = kabsch_alignment(L_opt, L_start)
+                            L_opt_self_aligned = apply_transform(L_opt, c_L_opt, c_L_start, R_L)
+                            ligand_self_aligned_rmsd = round(calculate_rmsd(L_opt_self_aligned, L_start), 3)
+
+                        min_wbo = parse_wbo_min(str(wbo_path), lig_idx, pock_idx)
+                        if min_wbo is not None:
+                            min_wbo = round(min_wbo, 4)
+                except Exception as e:
+                    pass
+
+            smi_val = job_meta_map.get(raw_name, job_meta_map.get(job_name, job_meta_map.get(f"docking_{job_name}", "Unknown")))
+
+            qm_records[raw_name] = {
+                "Directory": raw_name,
+                "Method": method,
+                "Model_Index": model_idx,
+                "Ligand_RMSD_Pocket_Aligned": ligand_pocket_aligned_rmsd,
+                "HOMO_LUMO_Gap_eV": xtb_props.get("HOMO_LUMO_Gap_eV"),
+                "Total_Dipole_Moment_Debye": xtb_props.get("Total_Dipole_Moment_Debye"),
+                "Total_SCF_Energy_Eh": xtb_props.get("Total_SCF_Energy_Eh"),
+                "Pocket_Backbone_RMSD": pocket_bb_rmsd,
+                "Ligand_Self_Aligned_RMSD": ligand_self_aligned_rmsd,
+                "Min_WBO": min_wbo,
+                "SMILES": smi_val,
+                "test_dataset": dataset
+            }
+
+    # Build QM lookup maps by name and canonical SMILES
+    def canon_smi(s):
+        if not s or s == "Unknown":
+            return None
+        try:
+            from rdkit import Chem
+            m = Chem.MolFromSmiles(s)
+            return Chem.MolToSmiles(m) if m else None
+        except Exception:
+            return None
+
+    qm_by_name = {}
+    qm_by_canon = {}
+    matched_qm_names = set()
+
+    for q_name, q_rec in qm_records.items():
+        qm_by_name[q_name] = q_rec
+        qm_by_name[q_name.lower()] = q_rec
+        jn = q_name[4:] if q_name.startswith("run_") else q_name
+        if jn.endswith("_model"):
+            jn = jn[:-6]
+        qm_by_name[jn] = q_rec
+        qm_by_name[jn.lower()] = q_rec
+        
+        cs = canon_smi(q_rec.get("SMILES"))
+        if cs:
+            qm_by_canon[cs] = q_rec
+            qm_by_canon[(q_rec["Method"].lower(), q_rec["test_dataset"].lower(), cs)] = q_rec
+
+    # -------------------------------------------------------------------------
+    # 2. Parse AF3 structural predictions from af3_path
+    # -------------------------------------------------------------------------
+    af3_records = []
+    if af3_path.exists():
+        af3_dirs = [d for d in af3_path.iterdir() if d.is_dir() and not d.name.startswith(("_", "."))]
+        print(f"Extracting AF3 docking confidence metrics across {len(af3_dirs)} candidate predictions...")
+        for td in af3_dirs:
+            raw_name = td.name
+            job_name = raw_name[4:] if raw_name.startswith("run_") else raw_name
+            method = "Unknown"
+            dataset = "Unknown"
+            model_idx = None
+            
+            for d in ["glaucoma_bulk", "glaucoma", "cardiomyopathy", "parkinsons", "hcc", "lincs1000_1", "lincs1000_2"]:
+                if d in job_name:
+                    dataset = d
+                    break
+
+            parts = job_name.split("_")
+            if len(parts) >= 2:
                 try:
-                    with open(cand, "r") as dj:
-                        dj_data = json.load(dj)
-                    for s in dj_data.get("sequences", []):
-                        if "ligand" in s:
-                            smiles_val = s["ligand"].get("smiles")
-                            break
+                    model_idx = int(parts[-1])
+                except ValueError:
+                    model_idx = None
+                if parts[0] == "docking":
+                    method = parts[1]
+                else:
+                    method = parts[0]
+            
+            # 1. AF3 Confidence JSON
+            af3_json = td / f"{job_name}_summary_confidences.json"
+            if not af3_json.exists():
+                af3_json = td / f"{raw_name}_summary_confidences.json"
+            iptm = None
+            ptm = None
+            ranking_score = None
+            if af3_json.exists():
+                try:
+                    with open(af3_json, "r") as f:
+                        conf = json.load(f)
+                        iptm = conf.get("iptm")
+                        ptm = conf.get("ptm")
+                        ranking_score = conf.get("ranking_score")
                 except Exception:
                     pass
-            if smiles_val:
-                break
-        
-        if not smiles_val:
-            smiles_val = job_meta_map.get(raw_name, job_meta_map.get(job_name, "Unknown"))
-        
-        records.append({
-            "Directory": raw_name,
-            "Method": method,
-            "Model_Index": model_idx,
-            "Ranking_Score": ranking_score,
-            "Ligand_RMSD_Pocket_Aligned": ligand_pocket_aligned_rmsd,
-            "HOMO_LUMO_Gap_eV": xtb_props.get("HOMO_LUMO_Gap_eV"),
-            "Total_Dipole_Moment_Debye": xtb_props.get("Total_Dipole_Moment_Debye"),
-            "Total_SCF_Energy_Eh": xtb_props.get("Total_SCF_Energy_Eh"),
-            "iPTM": iptm,
-            "PTM": ptm,
-            "Pocket_Backbone_RMSD": pocket_bb_rmsd,
-            "Ligand_Self_Aligned_RMSD": ligand_self_aligned_rmsd,
-            "Min_WBO": min_wbo,
-            "mean_protein_plddt": mean_prot_plddt,
-            "mean_ligand_plddt": mean_lig_plddt,
-            "SMILES": smiles_val,
-            "test_dataset": dataset
-        })
-        
-    df = pd.DataFrame(records)
+
+            # 2. CIF pLDDT scores
+            cif_file = td / f"{job_name}_model.cif"
+            if not cif_file.exists():
+                cif_file = td / f"{raw_name}_model.cif"
+            mean_prot_plddt = None
+            mean_lig_plddt = None
+            if cif_file.exists():
+                prot_plddts = []
+                lig_plddts = []
+                with open(cif_file, "r") as cf:
+                    for line in cf:
+                        if line.startswith(("ATOM", "HETATM")):
+                            p = line.split()
+                            if len(p) >= 15:
+                                try:
+                                    res = p[5].upper()
+                                    biso = float(p[14])
+                                    if "LIG" in res:
+                                        lig_plddts.append(biso)
+                                    else:
+                                        prot_plddts.append(biso)
+                                except Exception:
+                                    pass
+                if prot_plddts:
+                    mean_prot_plddt = round(sum(prot_plddts) / len(prot_plddts), 2)
+                if lig_plddts:
+                    mean_lig_plddt = round(sum(lig_plddts) / len(lig_plddts), 2)
+            
+            # 3. Extract SMILES from _data.json
+            smiles_val = None
+            for cand in [td / f"{raw_name}_data.json", td / f"{job_name}_data.json"]:
+                if cand.exists():
+                    try:
+                        with open(cand, "r") as dj:
+                            dj_data = json.load(dj)
+                            for s in dj_data.get("sequences", []):
+                                if "ligand" in s:
+                                    smiles_val = s["ligand"].get("smiles")
+                                    break
+                    except Exception:
+                        pass
+                if smiles_val:
+                    break
+
+            if not smiles_val:
+                smiles_val = job_meta_map.get(raw_name, job_meta_map.get(job_name, "Unknown"))
+            
+            # Match with QM data (by name or canonical SMILES)
+            qm_match = qm_by_name.get(raw_name, qm_by_name.get(job_name, qm_by_name.get(f"run_{job_name}_model", qm_by_name.get(f"run_{raw_name}_model", {}))))
+            if not qm_match and smiles_val and smiles_val != "Unknown":
+                cs = canon_smi(smiles_val)
+                if cs:
+                    qm_match = qm_by_canon.get((method.lower(), dataset.lower(), cs), qm_by_canon.get(cs, {}))
+            
+            if qm_match:
+                matched_qm_names.add(qm_match.get("Directory", ""))
+
+            af3_records.append({
+                "Directory": raw_name,
+                "Method": method,
+                "Model_Index": model_idx,
+                "Ranking_Score": ranking_score,
+                "Ligand_RMSD_Pocket_Aligned": qm_match.get("Ligand_RMSD_Pocket_Aligned"),
+                "HOMO_LUMO_Gap_eV": qm_match.get("HOMO_LUMO_Gap_eV"),
+                "Total_Dipole_Moment_Debye": qm_match.get("Total_Dipole_Moment_Debye"),
+                "Total_SCF_Energy_Eh": qm_match.get("Total_SCF_Energy_Eh"),
+                "iPTM": iptm,
+                "PTM": ptm,
+                "Pocket_Backbone_RMSD": qm_match.get("Pocket_Backbone_RMSD"),
+                "Ligand_Self_Aligned_RMSD": qm_match.get("Ligand_Self_Aligned_RMSD"),
+                "Min_WBO": qm_match.get("Min_WBO"),
+                "mean_protein_plddt": mean_prot_plddt,
+                "mean_ligand_plddt": mean_lig_plddt,
+                "SMILES": smiles_val,
+                "test_dataset": dataset
+            })
+
+    # Also add any QM records that weren't directly merged into af3_records
+    for q_name, q_rec in qm_records.items():
+        if q_name not in matched_qm_names:
+            af3_records.append({
+                "Directory": q_rec["Directory"],
+                "Method": q_rec["Method"],
+                "Model_Index": q_rec["Model_Index"],
+                "Ranking_Score": None,
+                "Ligand_RMSD_Pocket_Aligned": q_rec["Ligand_RMSD_Pocket_Aligned"],
+                "HOMO_LUMO_Gap_eV": q_rec["HOMO_LUMO_Gap_eV"],
+                "Total_Dipole_Moment_Debye": q_rec["Total_Dipole_Moment_Debye"],
+                "Total_SCF_Energy_Eh": q_rec["Total_SCF_Energy_Eh"],
+                "iPTM": None,
+                "PTM": None,
+                "Pocket_Backbone_RMSD": q_rec["Pocket_Backbone_RMSD"],
+                "Ligand_Self_Aligned_RMSD": q_rec["Ligand_Self_Aligned_RMSD"],
+                "Min_WBO": q_rec["Min_WBO"],
+                "mean_protein_plddt": None,
+                "mean_ligand_plddt": None,
+                "SMILES": q_rec.get("SMILES"),
+                "test_dataset": q_rec["test_dataset"]
+            })
+
+    df = pd.DataFrame(af3_records)
     if "Ranking_Score" in df.columns:
         df = df.sort_values(by="Ranking_Score", ascending=False)
-        
+
     out_file = Path(output_csv).resolve()
     os.makedirs(out_file.parent, exist_ok=True)
     df.to_csv(out_file, index=False)
     print(f"Successfully saved {len(df)} docking & QM metrics to: {out_file}")
     return df
 
-
-# =============================================================================
-# 5. CLI INTERFACE
-# =============================================================================
 
 def main():
     parser = argparse.ArgumentParser(
