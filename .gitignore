@@ -35,6 +35,7 @@ outputs_new/
 test_import.py
 
 scripts
+app_cache/
 
 Report_cache
 Report_files
