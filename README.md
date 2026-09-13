@@ -1,6 +1,5 @@
 # TheraFlow <img src="www/theraflow_hex.png" align="right" width="140" alt="TheraFlow Hex Logo"/>
 
-[![Build & CI Status](https://github.com/SydneyBioX/TheraFlow/actions/workflows/ci.yml/badge.svg)](https://github.com/SydneyBioX/TheraFlow/actions)
 [![Python Version](https://img.shields.io/badge/Python-3.10%20%7C%203.11%20%7C%203.12-blue.svg)](https://www.python.org/)
 [![R Version](https://img.shields.io/badge/R-%E2%89%A5%204.2-276DC3.svg)](https://www.r-project.org/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
