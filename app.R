@@ -27,7 +27,7 @@ library(stringr)
 
 find_data_path <- function() {
   candidates <- c(
-    "outputs_new/merged_master_dataframe.csv",
+    "outputs_v1/merged_master_dataframe.csv",
     "TheraFlow/outputs_new/merged_master_dataframe.csv",
     "outputs/merged_master_dataframe.csv",
     "../outputs_new/merged_master_dataframe.csv",
@@ -219,21 +219,25 @@ docking_qm_df <- if (!is.null(docking_qm_path) && file.exists(docking_qm_path)) 
 discover_3d_structures <- function() {
   candidates_theraflow <- Sys.glob(c(
     "outputs/docking_md_runs/*/*/*.pdb",
+    "outputs_v1/docking_md_runs/*/*/*.pdb",
     "TheraFlow/outputs/docking_md_runs/*/*/*.pdb",
     "../outputs/docking_md_runs/*/*/*.pdb",
     "/users/stgrad/rojashrj/Projects/omics2mol/TheraFlow/outputs/docking_md_runs/*/*/*.pdb",
     "outputs/docking_md_runs/*/*.cif",
-    "TheraFlow/outputs/docking_md_runs/*/*.cif"
+    "TheraFlow/outputs/docking_md_runs/*/*.cif",
+    "outputs/af3_predictions/*/*.cif"
   ))
   candidates_theraflow <- unique(candidates_theraflow[file.exists(candidates_theraflow)])
   
   candidates_af3 <- Sys.glob(c(
+    "/users/stgrad/rojashrj/Projects/omics2mol/ThereFlow/outputs_v1/*/*_model.cif",
     "alphafold3/output_result5/*/*_model.cif",
     "alphafold3/output_suppl/*/*_model.cif",
     "../alphafold3/output_result5/*/*_model.cif",
     "../alphafold3/output_suppl/*/*_model.cif",
     "/users/stgrad/rojashrj/Projects/omics2mol/alphafold3/output_result5/*/*_model.cif",
-    "/users/stgrad/rojashrj/Projects/omics2mol/alphafold3/output_suppl/*/*_model.cif"
+    "/users/stgrad/rojashrj/Projects/omics2mol/alphafold3/output_suppl/*/*_model.cif",
+    "/enna/users/ststaff/shiny/applications/TheraFlow/outputs/af3_predictions/*/*.cif"
   ))
   candidates_af3 <- unique(candidates_af3[file.exists(candidates_af3)])
   
