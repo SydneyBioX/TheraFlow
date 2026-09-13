@@ -60,6 +60,45 @@
 4. **Parkinson's** (`parkinsons`): Parkinson's disease substantia nigra profile (Target: SNCA).
 5. **Control Datasets** (`lincs1000_1`, `lincs1000_2`): LINCS L1000 landmark perturbation signatures.
 
+
+> [!NOTE]
+> **Upstream Dataset Preprocessing & Generative Methods Execution**:
+> If running the upstream generation pipeline from scratch:
+> 
+> 1. **Clone external model repositories into parent directory alongside `TheraFlow`**:
+>    ```bash
+>    git clone https://github.com/hliulab/SmilesGEN.git
+>    git clone https://github.com/insilicomedicine/BiAAE.git
+>    git clone https://github.com/ChemEXL/BiCEV.git
+>    git clone https://github.com/PaccMann/paccmann_rl.git
+>    git clone https://github.com/hzauzqy/TransGEM.git
+>    git clone https://github.com/Bunnybeibei/GexMolGen.git
+>    # GxRNN & Triomphe: Download from official web servers
+>    # FAME & GEx2SGen: Fully self-contained in TheraFlow/method_processing/
+>    ```
+> 
+> 2. **Preprocess raw disease signatures & align landmark genes**:
+>    ```bash
+>    python TheraFlow/method_processing/dataset_processing.py
+>    ```
+> 
+> 3. **Run generative models across test datasets**:
+>    ```bash
+>    python TheraFlow/method_processing/smilesgen.py --run-all
+>    python TheraFlow/method_processing/biaee.py --run-all
+>    python TheraFlow/method_processing/bicev.py --run-all
+>    python TheraFlow/method_processing/gxrnn.py --run-all
+>    python TheraFlow/method_processing/transgem.py --run-all
+>    python TheraFlow/method_processing/triomphe.py --run-all
+>    python TheraFlow/method_processing/fame.py --run-all
+>    python TheraFlow/method_processing/gex2sgen.py --run-all
+>    python TheraFlow/method_processing/paccmann_rl.py --run-all
+>    ```
+> 
+> 4. **Combine generated molecules into `processed_data.csv`**:
+>    ```bash
+>    python TheraFlow/method_processing/combine.py
+>    ```
 ---
 
 ## 🚀 Quick Execution
@@ -71,7 +110,7 @@ python TheraFlow/run_pipeline.py   --input TheraFlow/method_processing/data/proc
 
 ### 2. Launch Interactive TheraFlow Dashboard and Agent
 ```bash
-Rscript -e 'shiny::runApp("TheraFlow", port=8080)'
+Rscript -e 'shiny::runApp("TheraFlow")'
 ```
 
 ---

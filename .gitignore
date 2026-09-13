@@ -40,3 +40,7 @@ Report_files
 Reportv2.html
 app.R.bak
 pipeline/run_docking_and_merge.sh
+
+method_processing/outputs_v1/
+outputs_v1/
+
