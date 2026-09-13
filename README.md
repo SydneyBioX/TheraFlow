@@ -1,12 +1,37 @@
-# TheraFlow: Multi-Tier In Silico Evaluation & Discovery Framework for Transcriptome-Driven Generative Chemistry
+# TheraFlow <img src="www/theraflow_hex.png" align="right" width="140" alt="TheraFlow Hex Logo"/>
 
-**TheraFlow** is a comprehensive computational benchmarking and discovery framework for assessing de novo molecular generation from transcriptomic disease signatures. It integrates 10 deep generative architectures, medicinal chemistry filters, physical/stereochemical validation (PoseBusters), experimental bioactivity profiling (ChEMBL), disease reversal enrichment analysis (DTSEA), multi-objective Pareto consensus ranking (RRA), and AlphaFold 3 (AF3) neural co-folding with semi-empirical quantum mechanics (GFN2-xTB).
+[![Build & CI Status](https://github.com/SydneyBioX/TheraFlow/actions/workflows/ci.yml/badge.svg)](https://github.com/SydneyBioX/TheraFlow/actions)
+[![Python Version](https://img.shields.io/badge/Python-3.10%20%7C%203.11%20%7C%203.12-blue.svg)](https://www.python.org/)
+[![R Version](https://img.shields.io/badge/R-%E2%89%A5%204.2-276DC3.svg)](https://www.r-project.org/)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+[![AlphaFold 3](https://img.shields.io/badge/AlphaFold-v3.0-orange.svg)](https://github.com/google-deepmind/alphafold3)
+[![xTB](https://img.shields.io/badge/QM-GFN2--xTB-green.svg)](https://github.com/grimme-lab/xtb)
+
+**TheraFlow** is a comprehensive computational benchmarking and discovery framework for assessing *de novo* molecular generation from transcriptomic disease signatures. It integrates 10 deep generative architectures, medicinal chemistry filters, physical/stereochemical validation (PoseBusters), experimental bioactivity profiling (ChEMBL), disease reversal enrichment analysis (DTSEA), multi-objective Pareto consensus ranking (RRA), and AlphaFold 3 (AF3) neural co-folding with semi-empirical quantum mechanics (GFN2-xTB).
+
+---
+
+<p align="center">
+  <img src="www/Figure2a.png" alt="TheraFlow Multi-Tier Benchmarking Overview" width="95%">
+  <br>
+  <em>Figure: TheraFlow Multi-Tier In Silico Evaluation & Discovery Framework. (Vector format available: <a href="www/Figure2a.pdf">Figure2a.pdf</a>)</em>
+</p>
 
 ---
 
 ## 🏗️ Architecture & Pipeline Stages
 
-
+- **1. Transcriptomic Disease Perturbations**: Disease DEG profiles (Cardiomyopathy, Glaucoma, HCC, Parkinson's) & LINCS L1000 controls.
+- **2. Deep Generative Models (10 Methods)**: Expression-to-molecule generation across diverse sequence, graph, and diffusion paradigms.
+- **3. Multi-Tier Downstream Evaluation**:
+  - *Generative Performance*: Validity, uniqueness, MOSES novelty, internal diversity.
+  - *2D Physicochemical & Safety*: MW, LogP, TPSA, QED, SA score, PAINS/BRENK/NIH alerts.
+  - *3D Physical Realism*: ETKDGv3 conformer generation and PoseBusters stereochemical/geometry checks.
+  - *ChEMBL Target Profiling*: Structural analog retrieval, target gene mapping, and experimental nanomolar potency.
+  - *DTSEA Disease Signature Reversal*: PPI network-weighted Drug-Target Set Enrichment Analysis.
+- **4. Pareto Optimization & Consensus RRA**: Multi-objective Pareto frontier ranking and Robust Rank Aggregation to identify top candidates per method and disease.
+- **5. AlphaFold 3 Neural Docking & GFN2-xTB QM**: Multi-GPU complex co-folding, pocket interface extraction (4.0–5.0 Å), and semi-empirical quantum mechanical electronic stability descriptors.
+- **6. Master Integration & Interactive App**: Unified 100+ metric master dataframe powering an interactive R Shiny discovery dashboard.
 
 ---
 
@@ -56,7 +81,7 @@ The TheraFlow pipeline executes seamlessly end-to-end via `TheraFlow/pipeline/`:
 
 6. **Stage 6: AlphaFold 3 Batch Neural Docking & GFN2-xTB QM Analysis (`6.docking_md.py`)**  
    - Predicts 3D target-ligand complex co-folded structures using AlphaFold 3 across parallel GPUs.
-   - Extracts active site binding pockets (4.0-5.0 Å) via `take_interface.py`.
+   - Extracts active site binding pockets (4.0–5.0 Å) via `take_interface.py`.
    - Runs semi-empirical GFN2-xTB calculations across 16 CPU cores to derive quantum chemical descriptors (HOMO-LUMO gap, total dipole moment, SCF energy, Wiberg bond orders, pocket RMSD).
 
 7. **Stage 7: Consensus Prioritization & Master Dataset Integration (`7.final_merge.py` / `consensus_ranking.R`)**  
@@ -78,7 +103,7 @@ bash TheraFlow/pipeline/run_docking_and_merge.sh
 
 ### 3. Launch Interactive TheraFlow Dashboard
 ```bash
-Rscript -e "shiny::runApp('TheraFlow', port=8080)"
+Rscript -e 'shiny::runApp("TheraFlow", port=8080)'
 ```
 
 ---
