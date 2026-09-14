@@ -24,6 +24,7 @@ library(stringr)
 # ------------------------------------------------------------------------------
 # 1. DATA INGESTION & GLOBAL PREPARATION
 # ------------------------------------------------------------------------------
+set.seed(42)
 
 find_data_path <- function() {
   candidates <- c(
@@ -69,7 +70,7 @@ method_map <- c(
   "paccmann_rl" = "Paccmann RL",
   "smilesgen"   = "SmilesGEN",
   "transgem"    = "TransGEM",
-  "triomphe"    = "Triomphe"
+  "triomphe"    = "TRIOMPHE"
 )
 
 master_df[, method := ifelse(tolower(method) %in% names(method_map), 
@@ -200,9 +201,12 @@ method_colors <- c(
 
 find_docking_qm_path <- function() {
   candidates <- c(
+    "outputs_v1/docking_qm_metrics.csv",
+    "TheraFlow/outputs_v1/docking_qm_metrics.csv",
     "outputs/docking_qm_metrics.csv",
     "TheraFlow/outputs/docking_qm_metrics.csv",
     "../outputs/docking_qm_metrics.csv",
+    "/users/stgrad/rojashrj/Projects/omics2mol/TheraFlow/outputs_v1/docking_qm_metrics.csv",
     "/users/stgrad/rojashrj/Projects/omics2mol/TheraFlow/outputs/docking_qm_metrics.csv"
   )
   for (cand in candidates) {
@@ -312,9 +316,12 @@ discovered_structures_global <- discover_3d_structures()
 
 find_reversal_path <- function() {
   candidates <- c(
+    "outputs_v1/reversal_res.csv",
+    "TheraFlow/outputs_v1/reversal_res.csv",
     "outputs/reversal_res.csv",
     "TheraFlow/outputs/reversal_res.csv",
     "../outputs/reversal_res.csv",
+    "/users/stgrad/rojashrj/Projects/omics2mol/TheraFlow/outputs_v1/reversal_res.csv",
     "/users/stgrad/rojashrj/Projects/omics2mol/TheraFlow/outputs/reversal_res.csv"
   )
   for (cand in candidates) {
@@ -1361,7 +1368,7 @@ ui <- page_navbar(
           card_header(
             div(
               class = "d-flex justify-content-between align-items-center flex-wrap gap-2",
-              tags$span(tags$b("Figure 8: 5-Axis Multi-Dimensional Architecture Radar Profile")),
+              tags$span(tags$b("5-Axis Multi-Dimensional Architecture Radar Profile")),
               div(
                 class = "d-flex align-items-center gap-2",
                 tags$span(style = "font-size: 0.85rem; color: #94a3b8; font-weight: 500;", "Display Mode:"),
@@ -1393,7 +1400,7 @@ ui <- page_navbar(
           card_header(
             div(
               class = "d-flex justify-content-between align-items-center flex-wrap gap-2",
-              tags$span(tags$b("Figure 9: Covariance & Property Trade-offs")),
+              tags$span(tags$b("Covariance & Property Trade-offs")),
               div(
                 class = "d-flex align-items-center gap-2",
                 tags$span(style = "font-size: 0.85rem; color: #94a3b8; font-weight: 500;", "Display Mode:"),
@@ -2641,17 +2648,18 @@ server <- function(input, output, session) {
         Total = n(),
         Stage1 = sum(stage1_valid) / n() * 100,
         Stage2 = sum(stage2_druglike) / n() * 100,
-        Stage3 = sum(stage3_reversal) / n() * 100,
-        Stage4 = sum(stage4_consensus) / n() * 100,
+        Stage3 = sum(stage2_posebusters) / n() * 100,
+        Stage4 = sum(stage3_reversal) / n() * 100,
         .groups = "drop"
       ) %>%
-      pivot_longer(cols = c(Stage1, Stage2, Stage3, Stage4), names_to = "Stage", values_to = "Pass_Rate")
+      pivot_longer(cols = c(Total, Stage1, Stage2, Stage3, Stage4), names_to = "Stage", values_to = "Pass_Rate")
     
     stage_labels <- c(
-      "Stage1" = "Stage 1: Syntax Valid",
-      "Stage2" = "Stage 2: Drug-Like & 3D",
-      "Stage3" = "Stage 3: Disease Reversal",
-      "Stage4" = "Stage 4: MD Consensus"
+      "Total" = "Candidate molecules",
+      "Stage1" = "Stage 1: Syntactic Validation",
+      "Stage2" = "Stage 2: Medicinal Chemistry Validation",
+      "Stage3" = "Stage 3: Structural Validation",
+      "Stage4" = "Stage 4: Functional and Biological Validation"
     )
     attr_df$Stage_Label <- stage_labels[attr_df$Stage]
     
@@ -2899,6 +2907,7 @@ server <- function(input, output, session) {
   
   # Figure 8: 5-Axis Multi-Dimensional Architecture Radar Profile (Report.qmd p1 & p2)
   output$plot_fig8_radar <- renderPlotly({
+    set.seed(42)
     df <- filtered_data()
     if (nrow(df) == 0) return(plotly_empty())
     
@@ -3007,6 +3016,7 @@ server <- function(input, output, session) {
   
   # Figure 9: Covariance & Property Trade-offs (Report Figures 11, 20, 21)
   output$plot_fig9_covariance <- renderPlot({
+    set.seed(42)
     df <- filtered_data()
     if (nrow(df) == 0) {
       return(ggplot() + theme_void() + annotate("text", x = 0.5, y = 0.5, label = "No data available matching filters", color = "#94a3b8", size = 6))
@@ -3096,11 +3106,20 @@ server <- function(input, output, session) {
     if (length(finite_vals) == 0) finite_vals <- c(-0.1, 0.1)
     cov_range <- quantile(finite_vals, probs = c(0.01, 0.99), na.rm = TRUE)
     if (cov_range[1] == cov_range[2]) {
-      cov_range[1] <- cov_range[1] - 0.01
-      cov_range[2] <- cov_range[2] + 0.01
-    }
-    dynamic_breaks <- seq(from = cov_range[1], to = cov_range[2], length.out = 6)
+       cov_range[1] <- cov_range[1] - 0.01
+       cov_range[2] <- cov_range[2] + 0.01
+     }
+     
+    file_path <- "outputs_v1/merged_master_dataframe.csv"
     
+    if (file.exists(file_path)) {
+      dynamic_breaks <- seq(from = -0.04646679, to = 0.06913094, length.out = 6)
+    } else {
+      dynamic_breaks <- seq(from = cov_range[1], to = cov_range[2], length.out = 6)
+    }
+    
+    print(dynamic_breaks)
+
     p <- ggplot(plot_df, aes(x = class1, y = class2, fill = fill_val)) +
       geom_tile(color = "#1e293b", linewidth = 0.25) +
       facet_wrap(~method, nrow = 2) +
@@ -3369,7 +3388,6 @@ server <- function(input, output, session) {
     }
     return(dt)
   })
-  
   # Download handler for master CSV
   output$download_master_csv <- downloadHandler(
     filename = function() {
