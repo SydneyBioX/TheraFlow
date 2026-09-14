@@ -1750,7 +1750,7 @@ ui <- page_navbar(
       card_header(
         div(
           class = "d-flex justify-content-between align-items-center flex-wrap gap-2",
-          tags$span(tags$b("Complete Master Benchmark Dataset (All 109 Columns & 17,931 Rows)")),
+          tags$span(tags$b("Complete Master Benchmark Dataset")),
           div(
             class = "d-flex align-items-center gap-2",
             tags$span(class = "badge bg-primary", paste0(format(nrow(master_df), big.mark = ","), " Molecules")),
