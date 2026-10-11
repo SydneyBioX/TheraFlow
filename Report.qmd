@@ -198,7 +198,7 @@ TheraFlow integrates more than 70 complementary evaluation metrics spanning mode
 #| fig-height: 10
 #| fig-width: 15
 #| label: fig-1
-
+getwd()
 df = fread("outputs/merged_master_dataframe.csv")
 
 columns = c("SMILES", "method", "QED", "SA_Score", "MW", "LogP", "HBA", "HBD", "Passes_Safety", "Sim_Morg_Tani", "internal_energy", "internal_steric_clash", "aromatic_ring_flatness", "non-aromatic_ring_non-flatness", "number_short_outlier_bonds", "number_long_outlier_bonds", "most_extreme_relative_angle", "reversal_score_scaled")
@@ -965,6 +965,563 @@ ggplot(plot2_ribbon_data) +
   ) +
   labs(x = "Pass Rate (%) from", y = "Method")
 ```
+### Correlation between stages
+```{r}
+#| label: fig-18
+#| fig-height: 8
+#| fig-width: 10
+library(dplyr)
+library(ggplot2)
+library(data.table)
+library(igraph)
+library(purrr)
+library(tidyverse)
+library(tidyr)
+library(readr)
+library(limma)
+library(tibble)
+library(patchwork)
+library(rPref)
+library(ggradar)
+library(ggpubr)
+library(scales)
+library(funkyheatmap)
+# Create figures directory if it doesn't exist
+
+
+method_colors <- c(
+  "BiAAE"       = "#ff9999",
+  "BiCEV"       = "#ffbb99",
+  "FAME"        = "#ffecb3",
+  "Gex2SGen"    = "#ffffcc",
+  "GexMolGen"   = "#d4edda",
+  "GxRNN"       = "#a3e4d7",
+  "Paccmann RL" = "#a9cce3",
+  "SmilesGEN"   = "#bb8fce",
+  "TransGEM"    = "#d7bde2",
+  "TRIOMPHE"    = "#f5b7b1"
+)
+
+# Process raw data with strict sequential pass logic
+raw_filtered <- raw %>%
+  mutate(
+    pass_Basic_Chem = sanitization & all_atoms_connected & passes_valence_checks & passes_kekulization,
+    pass_Geometry   = bond_lengths & bond_angles & (number_clashes == 0),
+    pass_Planarity  = aromatic_ring_flatness & double_bond_flatness,
+    pass_PoseBusters_Total = pass_Basic_Chem & pass_Geometry & pass_Planarity,
+    # Enforce sequential stage filtering
+    pass_stage_1 = !is.na(QED),
+    pass_stage_2 = pass_stage_1 & !is.na(bond_angles),
+    pass_stage_3 = pass_stage_2 & coalesce(pass_PoseBusters_Total, FALSE),
+    pass_stage_4 = pass_stage_3 & !is.na(reversal_score_scaled),
+    pass_drug_like = (QED > 0.5) & 
+      (SA_Score < 4.5) & 
+      (MW < 500) & 
+      (LogP < 5) & 
+      (HBA <= 10) & 
+      (HBD <= 5)
+  )
+# Wide-format dataframe of Absolute Counts (N)
+df_counts <- raw_filtered %>%
+  group_by(method) %>%
+  summarise(
+    Stage_I   = sum(pass_stage_1, na.rm = TRUE),
+    Stage_II  = sum(pass_stage_2, na.rm = TRUE),
+    Stage_III = sum(pass_stage_3, na.rm = TRUE),
+    Stage_IV  = sum(pass_stage_4, na.rm = TRUE),
+    drug_like = sum(pass_drug_like,na.rm = TRUE),
+    .groups   = "drop"
+  ) %>%
+  left_join(external_totals, by = "method")
+# Wide-format dataframe of Percentages (%)
+df_percentages <- df_counts %>%
+  mutate(
+    Stage_I   = Stage_I / Total * 100,
+    Stage_II  = Stage_II / Total * 100,
+    Stage_III = Stage_III / Total * 100,
+    Stage_IV  = Stage_IV / Total * 100,
+    drug_like = drug_like / Total * 100
+  )
+# Clean long-format dataframe of Percentages (your updated df_passing)
+df_passing <- df_percentages %>%
+  pivot_longer(
+    cols = c(Stage_I, Stage_II, Stage_III, Stage_IV),
+    names_to = "Pipeline_Stage",
+    values_to = "Percentage"
+  ) %>%
+  mutate(
+    Pipeline_Stage = factor(
+      gsub("_", " ", Pipeline_Stage),
+      levels = c("Stage I", "Stage II", "Stage III", "Stage IV", "drug")
+    )
+  )
+
+
+make_pairwise_plot <- function(df, x_var, y_var, x_label, y_label, unit_label) {
+  cor_res <- cor.test(df[[x_var]], df[[y_var]], method = "pearson")
+  r_val <- round(cor_res$estimate, 2)
+  p_val <- format.pval(cor_res$p.value, digits = 2)
+  stats_text <- paste0("r = ", r_val, ", p = ", p_val)
+  # Custom color palette mapping for each method
+  method_colors <- c(
+  "BiAAE"       = "#ff9999",
+  "BiCEV"       = "#ffbb99",
+  "FAME"        = "#ffecb3",
+  "Gex2SGen"    = "#ffffcc",
+  "GexMolGen"   = "#d4edda",
+  "GxRNN"       = "#a3e4d7",
+  "Paccmann RL" = "#a9cce3",
+  "SmilesGEN"   = "#bb8fce",
+  "TransGEM"    = "#d7bde2",
+  "TRIOMPHE"    = "#f5b7b1"
+  )
+  
+  ggplot(df, aes_string(x = x_var, y = y_var)) +
+  geom_point(aes(color = method), size = 4) +
+  scale_color_manual(values = method_colors) +
+  annotate("text", x = -Inf, y = Inf, label = stats_text, hjust = -0.1, vjust = 1.5,
+  size = 3.5, fontface = "italic", color = "black") +
+  labs(
+  x = paste0(x_label, " (", unit_label, ")"),
+  y = paste0(y_label, " (", unit_label, ")"),
+  color = "Methods"
+  ) +
+  geom_smooth(
+  method = "lm",
+  fullrange = TRUE,
+  color = "maroon",
+  fill = "gray",
+  alpha = 0.2,
+  linewidth = 0.7,
+  se = TRUE
+  ) +
+  # 2. Points map fill and size locally
+  scale_x_continuous(expand = expansion(mult = c(0.02, 0.05))) +
+  scale_y_continuous(expand = expansion(mult = c(0.02, 0.05))) +
+  theme_classic(base_size = 14) +
+  theme(
+  strip.text = element_text(face = "bold"),
+  panel.grid.minor = element_blank(),
+  legend.position = "right"
+  )
+}
+
+
+# ==============================================================================
+# Fig 3C 
+# ==============================================================================
+p2_1_2 <- make_pairwise_plot(df_percentages, "Stage_I",   "Stage_II",  "Stage I selection rate",   "Stage II selection rate",  "%")
+p2_1_3 <- make_pairwise_plot(df_percentages, "Stage_I",   "Stage_III", "Stage I selection rate",   "Stage III selection rate", "%")
+p2_1_4 <- make_pairwise_plot(df_percentages, "Stage_I",   "Stage_IV",  "Stage I selection rate",   "Stage IV selection rate",  "%")
+
+# ==============================================================================
+# Fig 3B and supplement 2
+# ==============================================================================
+
+raw  <- fread("results/completed_cleaned_merged.csv")
+data <- fread("results/result5/final_combined_outputs.csv")
+external_totals <- data %>%
+  group_by(method) %>%
+  summarise(Total = n(), .groups = "drop")
+# Process raw data with strict sequential pass logic
+raw_filtered <- raw %>%
+  mutate(
+    pass_Basic_Chem = sanitization & all_atoms_connected & passes_valence_checks & passes_kekulization,
+    pass_Geometry   = bond_lengths & bond_angles & (number_clashes == 0),
+    pass_Planarity  = aromatic_ring_flatness & double_bond_flatness,
+    pass_PoseBusters_Total = pass_Basic_Chem & pass_Geometry & pass_Planarity,
+    # Sequential stage filtering
+    pass_stage_1 = !is.na(QED),
+    pass_stage_2 = pass_stage_1 & !is.na(bond_angles),
+    pass_stage_3 = pass_stage_2 & coalesce(pass_PoseBusters_Total, FALSE),
+    pass_stage_4 = pass_stage_3 & !is.na(reversal_score_scaled)
+  )
+# Wide-format dataframe of Absolute Counts (N)
+df_counts <- raw_filtered %>%
+  group_by(method) %>%
+  summarise(
+    Stage_I   = sum(pass_stage_1, na.rm = TRUE),
+    Stage_II  = sum(pass_stage_2, na.rm = TRUE),
+    Stage_III = sum(pass_stage_3, na.rm = TRUE),
+    Stage_IV  = sum(pass_stage_4, na.rm = TRUE),
+    .groups   = "drop"
+  ) %>%
+  left_join(external_totals, by = "method")
+# Pivot counts to long format and join Total to calculate Percentages
+df_combined <- df_counts %>%
+  pivot_longer(
+    cols = c(Total, Stage_I, Stage_II, Stage_III, Stage_IV),
+    names_to = "Pipeline_Stage",
+    values_to = "Absolute_Value"
+  ) %>%
+  mutate(
+    Pipeline_Stage = factor(
+      gsub("_", " ", Pipeline_Stage),
+      levels = c("Total", "Stage I", "Stage II", "Stage III", "Stage IV")
+    )
+  ) %>%
+  left_join(
+    df_counts %>% select(method, Total_Denominator = Total),
+    by = "method"
+  ) %>%
+  mutate(
+    Percentage = (Absolute_Value / Total_Denominator) * 100,
+    # Combined label format: "N\n(Pct%)", e.g., "1,250\n(25.0%)"
+    label_text = paste0(scales::comma(Absolute_Value), "\n(", sprintf("%.1f", Percentage), "%)")
+  )
+# Extract percentages dataframe for scatter correlations
+df_percentages <- df_counts %>%
+  mutate(
+    Stage_I   = Stage_I / Total * 100,
+    Stage_II  = Stage_II / Total * 100,
+    Stage_III = Stage_III / Total * 100,
+    Stage_IV  = Stage_IV / Total * 100
+  )
+
+
+library(ggplot2)
+library(viridis) # required for scale_fill_viridis_d
+
+plot_trend_abs <- ggplot(df_combined, aes(x = method, y = Absolute_Value, fill = Pipeline_Stage)) +
+  geom_col(position = position_dodge(width = 0.8), width = 0.7) +
+  scale_fill_manual(
+    values = c("#ffedd5", "#eae0a4", "#fca5a5", "#a6c2e1", "#bae6fe")
+  ) +
+  scale_y_log10(
+    labels = scales::comma_format(),
+    expand = expansion(mult = c(0, 0.05))
+  ) +
+  theme_classic(base_size = 12) +
+  theme(
+    axis.text.x = element_text(angle = 30, hjust = 1),
+    plot.title = element_text(size = 11),
+    legend.position = "bottom"
+  ) +
+  labs(
+    x = "Method",
+    y = "Absolute Candidates (N - Log Scale)",
+    fill = "Pipeline Stage"
+  )
+
+# Save high-resolution PDF for publication
+
+plot_trend_abs <- ggplot(df_combined, aes(x = Pipeline_Stage, y = Absolute_Value, color = method, group = method)) +
+  geom_line(linewidth = 1.2, alpha = 1) +
+  geom_point(size = 3, alpha = 1) +
+  scale_color_manual(values = method_colors) +
+  scale_y_log10(
+    labels = scales::comma_format(),
+    expand = expansion(mult = c(0.05, 0.05))
+  ) +
+  theme_classic(base_size = 12) +
+  theme(
+    axis.text.x = element_text(angle = 30, hjust = 1),
+    plot.title = element_text(size = 11)
+  ) +
+  labs(
+    title = "A) Absolute Yield Decay (N, Log10 Scale)",
+    x = "Pipeline Stage",
+    y = "Absolute Candidates (N - Log Scale)",
+    color = "Method",
+    legend.position = "bottom"
+  )
+
+
+plot_trend_pct <- ggplot(df_combined, aes(x = Pipeline_Stage, y = Percentage, color = method, group = method)) +
+  geom_line(linewidth = 1, alpha = 1) +
+  geom_point(size = 3, alpha = 1) +
+  scale_color_manual(values = method_colors) +
+  scale_y_continuous(
+    labels = function(x) paste0(x, "%"),
+    limits = c(0, 105),
+    expand = expansion(mult = c(0, 0.05))
+  ) +
+  theme_classic(base_size = 18) +
+  theme(
+    axis.text.x = element_text( angle = 45, hjust = 1),
+    legend.position = "none"
+  ) +
+  labs(
+    x = "",
+    y = "Stage-wise pass rate (%)",
+    color = "Method"
+  )
+
+
+# ==============================================================================
+# Fig 3D and E
+#===============================================================================
+raw = fread("results/completed_cleaned_merged.csv")
+
+data = fread("results/result5/final_combined_outputs.csv")
+external_totals = data %>%
+  group_by(method) %>%
+  summarise(
+    Total_Gen    = n())
+
+# 1. Calculate the counts from your raw data
+drug_like_analysis <- raw %>%
+  group_by(method) %>%
+  summarise(
+    # Raw passing counts for each individual gate
+    Stage1_Valid = n(),
+    Count_druglike = sum((QED > 0.5) & (SA_Score < 4.5) & (MW < 500) & (LogP < 5) & (HBA <= 10) & (HBD <= 5), na.rm = TRUE),
+    .groups = "drop"
+  ) %>%
+  # 2. Pivot to long format so we can handle metrics cleanly
+  pivot_longer(
+    cols = starts_with("Count_"),
+    names_to = "Metric",
+    values_to = "Passed_Count"
+  ) %>%
+  # 3. Merge/Join with your external totals dataframe
+  left_join(external_totals, by = "method") %>%
+  # 4. Clean metric names and calculate pass rates using the external denominators
+  mutate(
+    Metric = gsub("Count_", "", Metric),
+    Pass_Rate_Total  = (Passed_Count / Total_Gen) * 100,    # X-axis
+    Pass_Rate_Stage1 = (Passed_Count / Stage1_Valid) * 100 # Y-axis
+  )
+
+# 1. Calculate the three specific denominators for each PoseBusters metric
+posebusters_analysis <- raw %>%
+  mutate(
+    # Basic Chemistry Check
+    pass_Basic_Chem = sanitization & all_atoms_connected & passes_valence_checks & passes_kekulization,
+    
+    # Core Geometric Realism
+    pass_Geometry   = bond_lengths & bond_angles & (number_clashes == 0),
+    
+    # Flatness Requirements
+    pass_Planarity  = aromatic_ring_flatness & double_bond_flatness,
+    
+    # The Definitive PoseBusters Pass (Must clear everything)
+    pass_PoseBusters_Total = pass_Basic_Chem & pass_Geometry & pass_Planarity
+  ) %>%
+  group_by(method) %>%
+  summarise(
+    # Baselines
+    Stage1_Valid = n(),
+    Passed_Count   = sum(pass_PoseBusters_Total == TRUE, na.rm = TRUE),
+    
+    .groups = "drop"
+  ) %>%
+  left_join(external_totals, by = "method") %>%
+  mutate(
+    # Calculate your three distinct dimensions of performance
+    Pass_Rate_Total  = (Passed_Count / Total_Gen) * 100,     # X-axis
+    Pass_Rate_Stage1 = (Passed_Count / Stage1_Valid) * 100,   # Y-axis
+  )
+
+combined <- drug_like_analysis %>%
+  dplyr::select(method, 
+                DrugLike_Total  = Pass_Rate_Total, 
+                DrugLike_Stage1 = Pass_Rate_Stage1, 
+                DrugLike_Count  = Passed_Count) %>%
+  inner_join(
+    posebusters_analysis %>%
+      dplyr::select(method, 
+                    Structural_Total  = Pass_Rate_Total, 
+                    Structural_Stage1 = Pass_Rate_Stage1, 
+                    Structural_Count  = Passed_Count),
+    by = "method"
+  )
+
+# 2. Reshape into long format so ggplot can facet by "Stage"
+combined_long <- combined %>%
+  select("method",'DrugLike_Total', 'DrugLike_Stage1', 'DrugLike_Count', 'Structural_Total', 'Structural_Stage1') %>% 
+  pivot_longer(
+    cols = c(DrugLike_Total, DrugLike_Stage1,
+             Structural_Total, Structural_Stage1),
+    names_to = c("Metric", "Stage"),
+    names_pattern = "(DrugLike|Structural)_(.*)",
+    values_to = "Pass_Rate"
+  ) %>%
+  pivot_wider(
+    names_from = Metric,
+    values_from = Pass_Rate
+  ) %>%
+  mutate(Stage = factor(Stage, levels = c("Total", "Stage1", "Stage2"),
+                        labels = c("vs Total Generated", "vs Stage 1 Pass", "vs Stage 2 Pass")))
+
+
+cor_labels <- combined_long %>%
+  filter(Stage == "vs Stage 1 Pass") %>%
+  group_by(Stage) %>%
+  summarise(
+    r = cor(DrugLike, Structural, use = "complete.obs", method = "pearson"),
+    p = cor.test(DrugLike, Structural, method = "pearson")$p.value,
+    .groups = "drop"
+  ) %>%
+  mutate(
+    label = sprintf("r = %.2f, p = %.3f", r, p),
+    x = 30,
+    y = 90
+  )
+
+p1 = ggplot(
+  combined_long %>% filter(Stage == "vs Stage 1 Pass"), 
+  aes(x = DrugLike, y = Structural)
+) +
+  # 1. Force geom_smooth to ignore any dataset groups/fills entirely
+  geom_smooth(
+    method = "lm",
+    fullrange = TRUE,
+    color = "maroon",
+    fill = "gray",
+    alpha = 0.2,
+    linewidth = 0.7,
+    se = TRUE
+  ) +
+  # 2. Points map fill and size locally
+  geom_point(
+    aes(fill = method, size = DrugLike_Count), 
+    shape = 21, 
+    color = "black", 
+    stroke = 0.5
+  ) +
+  geom_text(
+    data = cor_labels,
+    aes(x = x, y = y, label = label),
+    inherit.aes = FALSE,
+    size = 5
+  ) + 
+  scale_fill_manual(values = method_colors) +
+  scale_size_continuous(range = c(3, 8), name = "Drug-like \ncount") +
+  guides(
+    fill = guide_legend(override.aes = list(size = 5))
+  ) +
+  scale_x_continuous(expand = expansion(mult = c(0.02, 0.05))) +
+  scale_y_continuous(expand = expansion(mult = c(0.02, 0.05))) +
+  labs(
+    x = "Drug-like selection rate (%) \nin Stage I molecules",
+    y = "Stage III selection rate (%) \nin Stage I molecules",
+    fill = "Generative Method"
+  ) +
+  theme_classic(base_size = 14) +
+  theme(
+    strip.text = element_text(face = "bold"),
+    panel.grid.minor = element_blank(),
+    legend.position = "right"
+  )
+
+# 1. Calculate the three specific denominators for each PoseBusters metric
+disease_analysis <- raw %>%
+  group_by(method) %>%
+  summarise(
+    # Baselines
+    Stage1_Valid = n(),
+    Passed_Count   = sum(!is.na(reversal_score)),
+    .groups = "drop"
+  ) %>%
+  left_join(external_totals, by = "method") %>%
+  mutate(
+    # Calculate your three distinct dimensions of performance
+    Pass_Rate_Total  = (Passed_Count / Total_Gen) * 100,     # X-axis
+    Pass_Rate_Stage1 = (Passed_Count / Stage1_Valid) * 100,   # Y-axis
+  )
+
+# now compare the attrition rate in stage 1 and stage 2 between the two dataframes 
+# 1. Join the two analyses on method (each already has Pass_Rate_Total/Stage1/Stage2)
+combined <- drug_like_analysis %>%
+  dplyr::select(method, 
+                DrugLike_Total  = Pass_Rate_Total, 
+                DrugLike_Stage1 = Pass_Rate_Stage1, 
+                DrugLike_Count  = Passed_Count) %>%
+  inner_join(
+    disease_analysis %>%
+      dplyr::select(method, 
+                    disease_Total  = Pass_Rate_Total, 
+                    disease_Stage1 = Pass_Rate_Stage1, 
+                    disease_Count  = Passed_Count),
+    by = "method"
+  )
+
+# 2. Reshape into long format so ggplot can facet by "Stage"
+combined_long <- combined %>%
+  pivot_longer(
+    cols = c(DrugLike_Total, DrugLike_Stage1,
+             disease_Total, disease_Stage1),
+    names_to = c("Metric", "Stage"),
+    names_pattern = "(DrugLike|disease)_(.*)",
+    values_to = "Pass_Rate"
+  ) %>%
+  pivot_wider(
+    names_from = Metric,
+    values_from = Pass_Rate
+  ) %>%
+  mutate(Stage = factor(Stage, levels = c("Total", "Stage1", "Stage2"),
+                        labels = c("vs Total Generated", "vs Stage 1 Pass", "vs Stage 2 Pass")))
+
+# 3. One faceted plot: DrugLike (x) vs Structural (y), one panel per stage
+cor_labels <- combined_long %>%
+  filter(Stage == "vs Stage 1 Pass") %>%
+  group_by(Stage) %>%
+  summarise(
+    r = cor(DrugLike, disease, use = "complete.obs", method = "pearson"),
+    p = cor.test(DrugLike, disease, method = "pearson")$p.value,
+    .groups = "drop"
+  ) %>%
+  mutate(
+    label = sprintf("r = %.2f, p = %.3f", r, p),
+    x = 30,
+    y = 90
+  )
+
+p2 = ggplot(
+  combined_long %>% filter(Stage == "vs Stage 1 Pass"), 
+  aes(x = DrugLike, y = disease)
+) +
+  # 1. Force geom_smooth to ignore any dataset groups/fills entirely
+  geom_smooth(
+    method = "lm",
+    fullrange = TRUE,
+    color = "maroon",
+    fill = "gray",
+    linewidth = 0.7, 
+    alpha = 0.2,
+    se = TRUE
+  ) +
+  # 2. Points map fill and size locally
+  geom_point(
+    aes(fill = method, size = DrugLike_Count), 
+    shape = 21, 
+    color = "black", 
+    stroke = 0.5
+  ) +
+  geom_text(
+    data = cor_labels,
+    aes(x = x, y = y, label = label),
+    inherit.aes = FALSE,
+    size = 5
+  ) + 
+  scale_fill_manual(values = method_colors) +
+  scale_size_continuous(range = c(3, 8), name = "Count") +
+  guides(
+    fill = guide_legend(override.aes = list(size = 5))
+  ) +
+  scale_x_continuous(expand = expansion(mult = c(0.02, 0.05))) +
+  scale_y_continuous(expand = expansion(mult = c(0.02, 0.05))) +
+  labs(
+    x = "Drug-like selection rate (%) \nin Stage I molecules",
+    y = "Stage III selection rate (%) \nin Stage I molecules",
+    fill = "Generative Method"
+  ) +
+  theme_classic(base_size = 14) +
+  theme(
+    strip.text = element_text(face = "bold"),
+    plot.title = element_text(face = "bold"),
+    panel.grid.minor = element_blank(),
+    legend.position = "right"
+  )
+
+(plot_trend_pct + p2_1_2 + p2_1_3) / 
+  (p2_1_4 + p1 + p2) &
+  theme(legend.position = "none")
+
+
+```
+
 :::
 
 ## Distinct generative architectures occupy different regions of therapeutic evaluation space
